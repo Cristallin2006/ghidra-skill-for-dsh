@@ -1,0 +1,343 @@
+# One-shot triage scan: metadata, imports/exports, suspicious import groups,
+# quick interesting strings, and language/packer hints
+# @category DSH.Reverse
+# @runtime PyGhidra
+
+# --- DSH @out support (self-contained, no cross-script imports) ---
+# If the first script argument starts with '@', it is popped and treated as an
+# output file path: the full JSON payload is written there, and stdout only
+# carries a short status summary between the markers.
+_DSH_OUT_PATH = None
+
+def _dsh_extract_out():
+    global _DSH_OUT_PATH
+    try:
+        args = list(getScriptArgs())
+    except NameError:
+        return []
+    if args and str(args[0]).startswith("@"):
+        _DSH_OUT_PATH = str(args[0])[1:]
+        args = args[1:]
+    return args
+
+_DSH_ARGS = _dsh_extract_out()
+# --- end DSH @out support ---
+
+import json
+import re
+
+MAX_STRINGS = 20000
+MAX_QUICK_STRINGS = 50
+
+SUSPICIOUS = {
+    "anti_debug": [
+        "isdebuggerpresent", "checkremotedebuggerpresent",
+        "ntqueryinformationprocess", "ntsetinformationthread",
+        "outputdebugstringa", "outputdebugstringw",
+        "gettickcount", "queryperformancecounter", "rdtsc"
+    ],
+    "injection": [
+        "virtualallocex", "writeprocessmemory", "createremotethread",
+        "openprocess", "ntmapviewofsection", "queueuserapc",
+        "setwindowshookex"
+    ],
+    "crypto": [
+        "cryptencrypt", "cryptdecrypt", "cryptacquirecontext",
+        "bcryptencrypt", "aes"
+    ],
+    "network": [
+        "internetopen", "internetconnect", "httpsendrequest",
+        "winhttpopen", "urldownloadtofile", "socket", "connect",
+        "send", "recv", "wsastartup"
+    ],
+    "persistence": [
+        "regsetvalue", "regcreatekey", "createservice", "startservice",
+        "schtasks"
+    ],
+    "dynamic_loading": [
+        "loadlibrarya", "loadlibraryw", "getprocaddress", "ldrloaddll"
+    ]
+}
+
+# Suffixes that still count as the same API family (A/W/Ex variants)
+_VARIANT_SUFFIXES = ("", "a", "w", "ex", "exa", "exw")
+
+QUICK_STRING_RE = re.compile(
+    r"flag|passw|correct|wrong|usage|key|congrat|success|fail", re.IGNORECASE)
+
+
+def matches_family(import_name, base):
+    """Case-insensitive match of an import against an API base name,
+    tolerating A/W/Ex suffix variants but not unrelated longer names."""
+    name = import_name.lower()
+    if not name.startswith(base):
+        return False
+    return name[len(base):] in _VARIANT_SUFFIXES
+
+
+def emit(data):
+    """Write full JSON to the @out file if given, else print between markers."""
+    if _DSH_OUT_PATH:
+        try:
+            f = open(_DSH_OUT_PATH, "w")
+            try:
+                f.write(json.dumps(data))
+            finally:
+                f.close()
+            summary = {
+                "status": data.get("status", "success"),
+                "out": _DSH_OUT_PATH,
+                "count": data.get("meta", {}).get("function_count", 0)
+            }
+            if data.get("status") == "error":
+                summary["error"] = data.get("error")
+            print("===JSON_START===")
+            print(json.dumps(summary))
+            print("===JSON_END===")
+        except Exception as write_err:
+            print("===JSON_START===")
+            print(json.dumps({"status": "error",
+                              "error": "failed to write out file: " + str(write_err)}))
+            print("===JSON_END===")
+    else:
+        print("===JSON_START===")
+        print(json.dumps(data))
+        print("===JSON_END===")
+
+
+def collect_imports(program):
+    """Return dict of library name -> sorted list of imported symbol names."""
+    imports = {}
+    st = program.getSymbolTable()
+    sym_iter = st.getExternalSymbols()
+    while sym_iter.hasNext():
+        sym = sym_iter.next()
+        parent = sym.getParentNamespace()
+        lib = parent.getName() if parent is not None else "<unknown>"
+        if lib not in imports:
+            imports[lib] = []
+        name = sym.getName()
+        if name not in imports[lib]:
+            imports[lib].append(name)
+    for lib in imports:
+        imports[lib].sort()
+    return imports
+
+
+def collect_exports_and_entries(program):
+    exports = []
+    entries = []
+    st = program.getSymbolTable()
+    mem = program.getMemory()
+
+    entry_iter = st.getExternalEntryPointIterator()
+    while entry_iter.hasNext():
+        addr = entry_iter.next()
+        sym = st.getPrimarySymbol(addr)
+        name = sym.getName() if sym is not None else str(addr)
+        entries.append({"name": name, "address": str(addr)})
+        block = mem.getBlock(addr)
+        # Exports live in initialized memory; keep entry points separate list
+        if block is not None:
+            exports.append({"name": name, "address": str(addr)})
+    return exports, entries
+
+
+def collect_strings(program):
+    """Return (total_scanned, total_defined_strings, quick_matches)."""
+    listing = program.getListing()
+    quick = []
+    total_strings = 0
+    scanned = 0
+    for data in listing.getDefinedData(True):
+        scanned += 1
+        if scanned > MAX_STRINGS:
+            break
+        try:
+            if not data.hasStringValue():
+                continue
+        except Exception:
+            continue
+        total_strings += 1
+        if len(quick) >= MAX_QUICK_STRINGS:
+            continue
+        try:
+            value = str(data.getValue())
+            if value and QUICK_STRING_RE.search(value):
+                quick.append({"address": str(data.getAddress()),
+                              "value": value})
+        except Exception:
+            continue
+    return scanned, total_strings, quick
+
+
+def run():
+    try:
+        program = currentProgram
+        if program is None:
+            emit({"status": "error", "error": "No program loaded"})
+            return
+
+        result = {"status": "success"}
+
+        # --- meta ---
+        meta = {
+            "program_name": program.getName(),
+            "language": str(program.getLanguage().getLanguageID()),
+            "compiler": str(program.getCompilerSpec().getCompilerSpecID()),
+            "image_base": str(program.getImageBase()),
+            "min_address": str(program.getMinAddress()),
+            "max_address": str(program.getMaxAddress()),
+            "executable_path": program.getExecutablePath(),
+            "executable_format": program.getExecutableFormat(),
+            "function_count": program.getFunctionManager().getFunctionCount(),
+            "memory_blocks": []
+        }
+        try:
+            md5 = program.getExecutableMD5()
+            meta["md5"] = md5 if md5 else None
+        except Exception:
+            meta["md5"] = None
+
+        mem = program.getMemory()
+        block_names = []
+        for block in mem.getBlocks():
+            meta["memory_blocks"].append({
+                "name": block.getName(),
+                "start": str(block.getStart()),
+                "end": str(block.getEnd()),
+                "size": block.getSize(),
+                "permissions": ("%s%s%s" % (
+                    "r" if block.isRead() else "-",
+                    "w" if block.isWrite() else "-",
+                    "x" if block.isExecute() else "-"))
+            })
+            block_names.append(block.getName())
+        result["meta"] = meta
+
+        # --- imports / exports / entry points ---
+        imports = collect_imports(program)
+        result["imports"] = imports
+        exports, entries = collect_exports_and_entries(program)
+        result["exports"] = exports
+        result["entry_points"] = entries
+
+        # --- suspicious imports ---
+        all_import_names = []
+        for lib in imports:
+            for name in imports[lib]:
+                all_import_names.append((lib, name))
+
+        suspicious = {}
+        for category, bases in SUSPICIOUS.items():
+            hits = []
+            for lib, name in all_import_names:
+                for base in bases:
+                    if matches_family(name, base):
+                        hits.append({"library": lib, "name": name})
+                        break
+            if hits:
+                suspicious[category] = hits
+        result["suspicious_imports"] = suspicious
+
+        # --- clean IAT warning ---
+        total_imports = len(all_import_names)
+        clean_libs = True
+        for lib in imports:
+            low = lib.lower()
+            if not (low.startswith("kernel32") or low.startswith("ntdll")):
+                clean_libs = False
+                break
+        result["clean_iat_warning"] = bool(clean_libs and total_imports < 15)
+
+        # --- strings ---
+        scanned, total_strings, quick = collect_strings(program)
+        result["quick_strings"] = {
+            "total_strings_scanned": scanned,
+            "total_defined_strings": total_strings,
+            "scan_capped": scanned > MAX_STRINGS,
+            "matches": quick
+        }
+
+        # --- language / packer hints ---
+        hint_strings = {"go": False, "rust": False, "python": False}
+        go_re = re.compile(r"go\.buildid|runtime\.gopanic")
+        rust_re = re.compile(r"panicked at|\.rustc")
+        py_re = re.compile(r"PYINSTALLER|pyarmor|python3", re.IGNORECASE)
+
+        listing = program.getListing()
+        scanned2 = 0
+        for data in listing.getDefinedData(True):
+            scanned2 += 1
+            if scanned2 > MAX_STRINGS:
+                break
+            try:
+                if not data.hasStringValue():
+                    continue
+                value = str(data.getValue())
+            except Exception:
+                continue
+            if not value:
+                continue
+            if not hint_strings["go"] and go_re.search(value):
+                hint_strings["go"] = True
+            if not hint_strings["rust"] and rust_re.search(value):
+                hint_strings["rust"] = True
+            if not hint_strings["python"] and py_re.search(value):
+                hint_strings["python"] = True
+            if all(hint_strings.values()):
+                break
+
+        dotnet = False
+        for lib in imports:
+            if lib.lower().startswith("mscoree"):
+                dotnet = True
+                break
+        if not dotnet:
+            for lib, name in all_import_names:
+                if name == "_CorExeMain":
+                    dotnet = True
+                    break
+
+        upx = False
+        for bname in block_names:
+            if "UPX" in bname.upper():
+                upx = True
+                break
+
+        result["lang_hints"] = {
+            "go": hint_strings["go"],
+            "rust": hint_strings["rust"],
+            "dotnet": dotnet,
+            "python": hint_strings["python"],
+            "upx": upx
+        }
+
+        # --- PE extras (best effort; omitted when not derivable) ---
+        exe_format = program.getExecutableFormat() or ""
+        if "Portable Executable" in exe_format or exe_format.upper().endswith("(PE)"):
+            pe_extras = {}
+            tls_section = None
+            for bname in block_names:
+                if bname.lower() == ".tls" or bname.lower().startswith(".tls$"):
+                    tls_section = bname
+                    break
+            if tls_section is not None:
+                pe_extras["tls_section"] = tls_section
+                # TLS callbacks imply a non-empty .tls directory; check for
+                # defined data referencing callback addresses
+                block = mem.getBlock(tls_section)
+                if block is not None and block.getSize() > 0:
+                    pe_extras["tls_section_size"] = block.getSize()
+            if pe_extras:
+                result["pe_extras"] = pe_extras
+
+        emit(result)
+
+    except Exception as e:
+        import traceback
+        emit({"status": "error", "error": str(e),
+              "traceback": traceback.format_exc()})
+
+
+run()
