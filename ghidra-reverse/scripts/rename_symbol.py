@@ -24,6 +24,7 @@ _DSH_ARGS = _dsh_extract_out()
 
 
 import json
+import re
 from ghidra.program.model.symbol import SourceType
 
 def output_json(data):
@@ -101,17 +102,24 @@ def run():
         tid = program.startTransaction("Rename symbol " + identifier)
         success = False
         try:
-            # Try to find as address first
-            if identifier.startswith("0x") or identifier.startswith("0X"):
-                addr = toAddr(identifier)
+            # Try to find as address first. Accept both 0x-prefixed and bare hex,
+            # since Ghidra prints addresses padded to the language's width
+            # (e.g. 00102ae0), and a bare address must not fall through to a
+            # symbol-name lookup that can never match.
+            if re.match(r"^(0[xX])?[0-9a-fA-F]+$", identifier):
+                try:
+                    addr = toAddr(identifier if identifier.lower().startswith("0x")
+                                  else "0x" + identifier)
+                except Exception:
+                    addr = None
                 if addr is not None:
-                    # Check if it's a function
-                    func = fm.getFunctionAt(addr)
+                    # Check if it's a function, else the function containing it
+                    func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
                     if func:
                         old_name = func.getName()
                         func.setName(new_name, SourceType.USER_DEFINED)
                         symbol_type = "function"
-                        address = str(addr)
+                        address = str(func.getEntryPoint())
                     else:
                         # Try to rename the primary symbol at this address
                         symbol = symbol_table.getPrimarySymbol(addr)

@@ -1,15 +1,37 @@
-# Ghidra 脚本编写（Jython · Ghidra 12.x）
+# Ghidra 脚本编写（PyGhidra · Ghidra 12.x）
 
-写自定义脚本放 `scripts/` 下即可被 `-scriptPath` 发现。脚本必须自包含（不保证互相 import）。
+写自定义脚本放 `scripts/` 下即可被 driver.py 发现。**一次性逻辑优先用 `exec_code.py`**（预置 helper 的任意代码执行），只有可复用的能力才沉淀为独立脚本。
 
-## 0. 运行时选择
+## 0. 运行时：PyGhidra（Python 3）
 
-| 运行时 | 头部标记 | 说明 |
+本 skill 已全部从 Jython 迁移到 PyGhidra（原因见 SKILL.md §0）。对脚本作者的影响：
+
+| 方面 | Jython（旧） | PyGhidra（现在） |
 |---|---|---|
-| Jython（Python 2.7） | `# @runtime Jython` | 本 skill 全部脚本用它；直接 Java 集成；无 f-string；显式 getter：`program.getName()` |
-| PyGhidra（Python 3） | `# @runtime PyGhidra` | Ghidra 11.2+；属性访问 `program.name`；本 skill 未用（生态兼容性优先） |
+| Python 版本 | 2.7 | 3.x（f-string、类型注解随便用） |
+| Java 数组 | `from jarray import array` | `jpype.JArray(jpype.JByte)([...])` |
+| `long("41",16)` | 可用 | 改 `int("41",16)` |
+| Java String → Python | 需手动转 | 自动是真 `str`，`json.dumps` 直接吃 |
+| `currentProgram`/`getScriptArgs()` | GhidraScript 全局 | 仍可用（`__missing__` 懒取 GhidraScript 属性），无需改 |
+| 有符号 byte | `b & 0xff` 同 | `memory.setByte` 仍收**有符号** byte，`>127` 的 int 会 `OverflowError` |
 
-## 1. 标准骨架（每个脚本照抄）
+Ghidra Java API 完全一致，下面所有模板照常适用。PyGhidra 启动层面的坑（`pyghidra.start()` 必须先于 `ghidra.*` import 等）由 driver.py 处理，脚本作者不用管。
+
+## 0.5 exec_code.py：一次性逻辑的首选
+
+```bash
+# 写个 payload 文件（只需业务逻辑，helper 全预置好）
+cat > /tmp/pay.py <<'EOF'
+for f in list(fm.getFunctions(True))[:5]:
+    print(f.getName(), f.getEntryPoint())
+output_json({"status": "success", "count": fm.getFunctionCount()})
+EOF
+"$PY" "$SK/driver.py" exec <binary> exec_code.py "@/tmp/out.json" /tmp/pay.py
+```
+
+预置名字：`program`/`currentProgram`、`fm`、`listing`、`memory`、`toAddr`、`monitor`、`find_function(name_or_addr)`（三级查找）、`output_json(data)`。⚠ 无沙箱任意代码执行。
+
+## 1. 标准骨架（独立脚本照抄）
 
 ```python
 # @category DSH.Reverse

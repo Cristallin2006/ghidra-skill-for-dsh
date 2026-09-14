@@ -37,6 +37,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import analysis_config  # noqa: E402 - sibling module, path set above
+
 DEFAULT_GHIDRA = r"C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC"
 DEFAULT_JAVA_HOME = r"C:\Java"
 DEFAULT_WS = Path(os.path.expanduser("~")) / ".dsh" / "ghidra-workspace"
@@ -162,6 +165,13 @@ def cmd_import(args: argparse.Namespace) -> int:
     project = pyghidra.open_project(str(project_path), name, create=True)
     try:
         with _open_program(pyghidra, project, binary, create=True) as program:
+            # Replaces the Jython preScript: analysis options must be set on a
+            # loaded program before analyze() runs.
+            applied = analysis_config.configure(program, args.analysis)
+            if applied["changed"]:
+                print(f"import: analysis profile '{args.analysis}' -> "
+                      + ", ".join(f"{k}={'on' if v else 'off'}" for k, v in applied["changed"].items()))
+
             print("import: analysis")
             log = pyghidra.analyze(program)
             (ws / "logs" / f"{name}.analysis.log").write_text(log or "", encoding="utf-8")
@@ -181,13 +191,18 @@ def cmd_import(args: argparse.Namespace) -> int:
                     print("import: WARNING: triage report missing", file=sys.stderr)
                     return 1
 
-            # A project imported by another tool (for example the reverse-ghidra
-            # plugin) can be read-only for this process; the triage report is
-            # already on disk, so a refused save is not a failure.
-            try:
-                program.save("ghidra-reverse import", None)
-            except Exception as exc:  # noqa: BLE001
-                print(f"import: note: project not saved ({exc})")
+            # NOTE: the program cannot be persisted from here. loader.load()
+            # returns it behind a DomainFileProxy that reports read-only, and
+            # neither DomainFile.setReadOnly (UnsupportedOperationException on a
+            # proxy) nor ProgramDB.setChanged (no such method) clears it, so
+            # program.save() raises ghidra.util.ReadOnlyException. The project is
+            # therefore usable only for the length of this process.
+            #
+            # To get a project that outlives the process, create it with
+            # Ghidra's own headless importer first -- `driver.py export` does
+            # exactly that -- then point exec/exec-w at the same workspace.
+            print("import: the program is live for this process only; "
+                  "run 'driver.py export' once to persist a reusable project")
     finally:
         project.close()
 
@@ -232,13 +247,138 @@ def _open_program(pyghidra, project, binary: Path, create: bool = False):
 # ----------------------------------------------------------------------------- exec
 
 
-def cmd_exec(args: argparse.Namespace) -> int:
-    import pyghidra
+def cmd_export(args: argparse.Namespace) -> int:
+    """Create a reusable project through Ghidra's own headless importer.
 
+    PyGhidra cannot persist a program it loaded itself (see cmd_import), but
+    `analyzeHeadless -import` can, and the resulting flat project is exactly what
+    exec/exec-w open. This is the one place the skill still uses analyzeHeadless,
+    with a `.java`-free argument list so no script provider is involved.
+    """
+    import subprocess
+
+    install = Path(os.environ["GHIDRA_INSTALL_DIR"])
+    headless = install / "support" / "analyzeHeadless.bat"
+    if not headless.is_file():
+        raise SystemExit(f"headless launcher not found at {headless}")
+
+    binary = Path(args.binary).resolve()
+    if not binary.is_file():
+        raise SystemExit(f"binary not found: {binary}")
+
+    ws = workspace()
+    name = project_name_for(binary)
+    gpr = project_root() / f"{name}.gpr"
+    if gpr.exists() and not args.force:
+        print(f"export: project '{name}' already exists (use --force to re-import)")
+        return 0
+    if gpr.exists():
+        import shutil
+
+        shutil.rmtree(project_root() / f"{name}.rep", ignore_errors=True)
+        gpr.unlink(missing_ok=True)
+
+    env = dict(os.environ)
+    env.setdefault("JAVA_HOME", DEFAULT_JAVA_HOME)
+    # Keep Ghidra's own settings inside the workspace, matching the plugin.
+    settings = ws / "settings"
+    settings.mkdir(parents=True, exist_ok=True)
+    for key in ("APPDATA", "LOCALAPPDATA", "USERPROFILE"):
+        env[key] = str(settings)
+    env.setdefault("USERNAME", "dsh")
+    env.setdefault("USERDOMAIN", "DSH")
+
+    argv = [str(headless), str(project_root()), name, "-import", str(binary)]
+    if args.overwrite:
+        argv.append("-overwrite")
+    if args.analysis > 0:
+        argv += ["-analysisTimeoutPerFile", str(args.analysis)]
+    if args.max_cpu:
+        argv += ["-max-cpu", str(args.max_cpu)]
+
+    log_path = ws / "logs" / f"{name}.export.log"
+    print(f"export: {binary.name} -> project '{name}'")
+    completed = subprocess.run(argv, env=env, capture_output=True, text=True, cwd=str(ws))
+    log_path.write_text((completed.stdout or "") + "\n--- stderr ---\n" + (completed.stderr or ""),
+                        encoding="utf-8")
+
+    if completed.returncode != 0:
+        print(f"export: analyzeHeadless exit={completed.returncode} (log {log_path})", file=sys.stderr)
+        return completed.returncode
+    if not (project_root() / f"{name}.rep").is_dir():
+        print(f"export: no project created (log {log_path})", file=sys.stderr)
+        return 1
+
+    print(f"export: done - exec/exec-w can now open '{name}' (log {log_path})")
+    return 0
+
+
+def _as_posix(path) -> str:
+    """Forward-slash form for paths handed to Ghidra's Java option parser.
+
+    analyzeHeadless reads its own arguments through a Java property parser, so a Windows
+    backslash is treated as an escape and the path is rejected with
+    "Bad argument: C:\\...".  Ghidra accepts forward slashes on Windows.
+    """
+    return Path(path).as_posix()
+
+
+def run_java_script(binary: Path, script: Path, script_args, name: str, read_only: bool,
+                    extra_script_dirs=()):
+    """Run a Java GhidraScript through Ghidra's own headless launcher.
+
+    PyGhidra's `ghidra_script()` cannot run a .java script that lives outside a
+    registered script source directory: Ghidra's JavaScriptProvider raises
+    "Failed to find source bundle containing script".  `analyzeHeadless -scriptPath`
+    registers the directory properly, and this is the same path the reverse-ghidra
+    plugin uses for its Bridge*.java scripts, so Java and Python scripts reach the
+    project through equivalent means.
+    """
+    import subprocess
+
+    install = Path(os.environ["GHIDRA_INSTALL_DIR"])
+    headless = install / "support" / "analyzeHeadless.bat"
+    if not headless.is_file():
+        raise SystemExit(f"headless launcher not found at {headless}")
+
+    ws = workspace()
+    env = dict(os.environ)
+    env.setdefault("JAVA_HOME", DEFAULT_JAVA_HOME)
+    settings = ws / "settings"
+    settings.mkdir(parents=True, exist_ok=True)
+    for key in ("APPDATA", "LOCALAPPDATA", "USERPROFILE"):
+        env[key] = str(settings)
+    env.setdefault("USERNAME", "dsh")
+    env.setdefault("USERDOMAIN", "DSH")
+
+    dirs = [_as_posix(script.parent)]
+    dirs += [_as_posix(d) for d in extra_script_dirs if Path(d).is_dir()]
+    argv = [str(headless), _as_posix(project_root()), name,
+            "-scriptPath", ";".join(dict.fromkeys(dirs)),
+            "-process", binary.name,
+            "-noanalysis",
+            "-postScript", script.name]
+    argv += [str(a) for a in script_args]
+    if read_only:
+        argv.append("-readOnly")
+
+    log_path = ws / "logs" / f"{name}.{script.stem}.java.log"
+    completed = subprocess.run(argv, env=env, capture_output=True, text=True, cwd=str(ws))
+    text = (completed.stdout or "") + "\n--- stderr ---\n" + (completed.stderr or "")
+    log_path.write_text(text, encoding="utf-8")
+    print(text)
+    if completed.returncode != 0:
+        print(f"exec: analyzeHeadless exit={completed.returncode} (log {log_path})",
+              file=sys.stderr)
+    return completed.returncode
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
     binary = Path(args.binary).resolve()
     script = Path(args.script)
     if not script.is_absolute():
-        for candidate in (script_dir() / script.name, Path.cwd() / script.name):
+        for candidate in (script_dir() / script.name, Path.cwd() / script.name,
+                          workspace() / "scripts" / script.name):
             if candidate.is_file():
                 script = candidate
                 break
@@ -254,6 +394,15 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
     outer = project_path / f"{name}.exec.log"
     print(f"exec: project={name} script={script.name}")
+
+    if script.suffix.lower() == ".java":
+        # Java scripts go through analyzeHeadless; see run_java_script for why.
+        rc = run_java_script(binary, script, args.script_args, name, read_only=False,
+                             extra_script_dirs=[ws / "scripts"])
+        print(f"exec: done (log {ws / 'logs' / (name + '.' + script.stem + '.java.log')})")
+        return rc
+
+    import pyghidra
 
     # PyGhidra writes changes back when the project is saved on close; a read-only
     # pass simply skips the explicit save below.
@@ -274,9 +423,19 @@ def cmd_list(args: argparse.Namespace) -> int:
     binary = Path(args.binary).resolve()
     ws = workspace()
     name = project_name_for(binary)
+    rows = []
     with pyghidra.open_project(str(project_root()), name, create=False) as project:
-        for program in pyghidra.walk_programs(project):
-            print(f"  {program.getDomainFile().getPathname()}  ({program.getLanguageID()})")
+        # walk_programs is callback-based: it opens each program inside its own
+        # context, so collect only the cheap facts here.
+        pyghidra.walk_programs(
+            project,
+            lambda domain_file, program: rows.append(
+                (str(domain_file.getPathname()), str(program.getLanguageID()))),
+        )
+    if not rows:
+        print(f"list: project '{name}' contains no programs")
+    for path, language in rows:
+        print(f"  {path}  ({language})")
     return 0
 
 
@@ -288,7 +447,19 @@ def main(argv: list[str] | None = None) -> int:
     p_import = sub.add_parser("import", help="import + analyze + triage")
     p_import.add_argument("binary")
     p_import.add_argument("--force", action="store_true")
+    p_import.add_argument("--analysis", choices=analysis_config.MODES, default="minimal",
+                          help="analysis profile: minimal disables the heavy analyzers "
+                               "(default), default enables them all")
     p_import.set_defaults(func=cmd_import)
+
+    p_export = sub.add_parser("export", help="create a reusable project via Ghidra's headless importer")
+    p_export.add_argument("binary")
+    p_export.add_argument("--force", action="store_true")
+    p_export.add_argument("--overwrite", action="store_true", help="pass -overwrite to the importer")
+    p_export.add_argument("--analysis", type=int, default=600,
+                          help="per-file analysis timeout in seconds; 0 skips the flag (default 600)")
+    p_export.add_argument("--max-cpu", type=int, default=4)
+    p_export.set_defaults(func=cmd_export)
 
     for cmd, write in (("exec", False), ("exec-w", True)):
         p = sub.add_parser(cmd, help="run a script against the project")

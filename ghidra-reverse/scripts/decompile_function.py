@@ -24,6 +24,7 @@ _DSH_ARGS = _dsh_extract_out()
 
 
 import json
+import re
 from ghidra.app.decompiler import DecompInterface, DecompileOptions
 from ghidra.util.task import ConsoleTaskMonitor
 
@@ -51,6 +52,8 @@ def output_json(data):
                 count = data["string_count"]
             elif "function_count" in data:
                 count = data["function_count"]
+            elif "decompiled_count" in data:
+                count = data["decompiled_count"]
             elif "instruction_count" in data:
                 count = data["instruction_count"]
             summary = {
@@ -112,6 +115,75 @@ def find_function(program, identifier):
 
     return None
 
+def split_identifiers(args):
+    """Split script args into one or more function identifiers.
+
+    Each decompile run costs a fresh JVM start under PyGhidra, so a caller that wants a
+    dozen functions should not be made to launch a dozen processes.  Accept the same
+    separators as the plugin's BridgeDecompile (comma, semicolon, whitespace) and keep
+    the single-identifier case behaving exactly as before.
+    """
+    out = []
+    for chunk in args:
+        for part in re.split(r"[,;\s]+", str(chunk)):
+            part = part.strip()
+            if part and part not in out:
+                out.append(part)
+    return out
+
+
+def decompile_one(program, decompiler, identifier, timeout=60):
+    """Decompile one function; return its result dict (never raises)."""
+    func = find_function(program, identifier)
+    if func is None:
+        return {"status": "error", "error": "Function not found: " + identifier,
+                "requested": identifier}
+
+    monitor = ConsoleTaskMonitor()
+    try:
+        results = decompiler.decompileFunction(func, timeout, monitor)
+    except Exception as exc:
+        return {"status": "error", "error": "decompile failed: " + str(exc),
+                "requested": identifier}
+
+    if not results.decompileCompleted():
+        return {"status": "error",
+                "error": "Decompilation failed: " + str(results.getErrorMessage()),
+                "requested": identifier}
+
+    decomp_func = results.getDecompiledFunction()
+    c_code = decomp_func.getC() if decomp_func else None
+    if not c_code:
+        return {"status": "error", "error": "No decompiled code produced",
+                "requested": identifier}
+
+    local_vars = []
+    high_func = results.getHighFunction()
+    if high_func:
+        local_symbols = high_func.getLocalSymbolMap()
+        if local_symbols:
+            for symbol in local_symbols.getSymbols():
+                var_info = {
+                    "name": symbol.getName(),
+                    "type": str(symbol.getDataType()),
+                    "size": symbol.getSize(),
+                }
+                storage = symbol.getStorage()
+                if storage:
+                    var_info["storage"] = str(storage)
+                local_vars.append(var_info)
+
+    return {
+        "status": "success",
+        "requested": identifier,
+        "function_name": func.getName(),
+        "address": str(func.getEntryPoint()),
+        "signature": str(func.getSignature()),
+        "c_code": c_code,
+        "local_variables": local_vars,
+    }
+
+
 def run():
     """Main script entry point."""
     try:
@@ -123,27 +195,17 @@ def run():
             })
             return
 
-        # Get function identifier from script args
-        args = _DSH_ARGS
-        if not args:
+        identifiers = split_identifiers(_DSH_ARGS)
+        if not identifiers:
             output_json({
                 "status": "error",
-                "error": "No function specified. Provide function name or address."
+                "error": "No function specified. Provide one or more function names or "
+                         "addresses, separated by commas or spaces."
             })
             return
 
-        func_identifier = args[0]
-
-        # Find the function
-        func = find_function(program, func_identifier)
-        if func is None:
-            output_json({
-                "status": "error",
-                "error": "Function not found: " + func_identifier
-            })
-            return
-
-        # Initialize decompiler
+        # Initialize decompiler once for the whole batch: the DecompInterface is the
+        # expensive part, and re-opening it per function is what made batching pointless.
         decompiler = DecompInterface()
         options = DecompileOptions()
         decompiler.setOptions(options)
@@ -156,55 +218,34 @@ def run():
             return
 
         try:
-            # Decompile the function
-            monitor = ConsoleTaskMonitor()
-            results = decompiler.decompileFunction(func, 60, monitor)
-
-            if not results.decompileCompleted():
-                output_json({
-                    "status": "error",
-                    "error": "Decompilation failed: " + str(results.getErrorMessage())
-                })
-                return
-
-            decomp_func = results.getDecompiledFunction()
-            c_code = decomp_func.getC() if decomp_func else None
-
-            if not c_code:
-                output_json({
-                    "status": "error",
-                    "error": "No decompiled code produced"
-                })
-                return
-
-            # Collect local variables
-            local_vars = []
-            high_func = results.getHighFunction()
-            if high_func:
-                local_symbols = high_func.getLocalSymbolMap()
-                if local_symbols:
-                    for symbol in local_symbols.getSymbols():
-                        var_info = {
-                            "name": symbol.getName(),
-                            "type": str(symbol.getDataType()),
-                            "size": symbol.getSize()
-                        }
-                        storage = symbol.getStorage()
-                        if storage:
-                            var_info["storage"] = str(storage)
-                        local_vars.append(var_info)
-
-            output_json({
-                "status": "success",
-                "function_name": func.getName(),
-                "address": str(func.getEntryPoint()),
-                "signature": str(func.getSignature()),
-                "c_code": c_code,
-                "local_variables": local_vars
-            })
-
+            results = [decompile_one(program, decompiler, ident)
+                       for ident in identifiers]
         finally:
             decompiler.dispose()
+
+        ok = [r for r in results if r.get("status") == "success"]
+        payload = {
+            "status": "success" if ok else "error",
+            "requested_count": len(identifiers),
+            "decompiled_count": len(ok),
+            "functions": results,
+        }
+        # Preserve the single-function shape so existing callers keep working.
+        if len(results) == 1:
+            payload.update(results[0])
+        else:
+            payload["function_name"] = ", ".join(r.get("function_name", "?") for r in ok)
+            payload["address"] = ", ".join(r.get("address", "?") for r in ok)
+            payload["c_code"] = "\n\n".join(
+                "/* ===== %s @ %s ===== */\n%s" % (r.get("function_name"), r.get("address"),
+                                                  r.get("c_code"))
+                for r in ok)
+            payload["local_variables"] = []
+            if not ok:
+                payload["error"] = "; ".join(
+                    "%s: %s" % (r.get("requested"), r.get("error")) for r in results)
+
+        output_json(payload)
 
     except Exception as e:
         import traceback

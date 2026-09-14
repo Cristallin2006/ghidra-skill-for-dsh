@@ -164,12 +164,19 @@ def run():
             return
 
         block = memory.getBlock(addr)
-        if block and not block.isWrite():
+        if block is None:
             output_json({
                 "status": "error",
-                "error": "Memory block is not writable: " + block.getName()
+                "error": "No memory block contains " + address_str
             })
             return
+        # A code block is normally flagged non-writable, which is what a binary
+        # patch has to overcome -- that flag is a permission, not a protection
+        # (its backing bytes are already loaded as read-write). Grant it here and
+        # restore it in the finally clause so the change is not left behind.
+        granted_write = False
+        if not block.isWrite():
+            granted_write = True
 
         # Read old bytes before patching
         old_bytes = []
@@ -187,18 +194,49 @@ def run():
         # Start a transaction for writing
         transaction_id = program.startTransaction("Patch bytes at " + address_str)
         success = False
+        cleared_units = 0
 
         try:
-            # Write new bytes
+            if granted_write:
+                block.setWrite(True)
+
+            # Ghidra refuses a memory change that conflicts with a decoded
+            # instruction ("Memory change conflicts with instruction at ..."), so
+            # drop the code units covering the patch range first. Only the covered
+            # span is cleared: an instruction that merely starts inside the range
+            # is truncated rather than removed wholesale.
+            listing = program.getListing()
+            patch_end = addr.add(len(new_bytes) - 1)
+            occupied = []
+            for i in range(len(new_bytes)):
+                cu = listing.getCodeUnitAt(addr.add(i))
+                if cu is not None and cu not in occupied:
+                    occupied.append(cu)
+
+            for cu in occupied:
+                start = cu.getMinAddress()
+                end = cu.getMaxAddress()
+                truncated_start = start if start.compareTo(addr) < 0 else addr
+                truncated_end = end if end.compareTo(patch_end) > 0 else patch_end
+                listing.clearCodeUnits(truncated_start, truncated_end, False)
+                cleared_units += 1
+
+            # Write new bytes; JPype needs a signed Java byte (0-255 overflows).
             for i, byte_val in enumerate(new_bytes):
                 try:
-                    memory.setByte(addr.add(i), byte_val)
+                    signed = byte_val - 256 if byte_val > 127 else byte_val
+                    memory.setByte(addr.add(i), signed)
                 except Exception as e:
                     raise Exception("Failed to write byte at offset %d: %s" % (i, str(e)))
 
             success = True
 
         finally:
+            if granted_write:
+                try:
+                    block.setWrite(False)
+                except Exception:
+                    pass
             program.endTransaction(transaction_id, success)
 
         if not success:
@@ -221,7 +259,10 @@ def run():
             "bytes_written": len(new_bytes),
             "old_bytes": " ".join(["%02x" % b for b in old_bytes]),
             "new_bytes": " ".join(["%02x" % b for b in new_bytes]),
-            "verified_bytes": " ".join(["%02x" % b for b in verify_bytes])
+            "verified_bytes": " ".join(["%02x" % b for b in verify_bytes]),
+            "memory_block": str(block.getName()),
+            "instructions_cleared": cleared_units,
+            "write_permission_granted": granted_write
         }
 
         # Add context information
