@@ -162,40 +162,52 @@ def run():
             entry_point = func.getEntryPoint()
 
             # Set up register inputs
+            skipped_inputs = []
             for reg_name, value in register_inputs.items():
                 try:
                     reg = emulator.getLanguage().getRegister(reg_name)
-                    if reg is not None:
-                        # Convert value to long
-                        if isinstance(value, str):
-                            if value.startswith("0x") or value.startswith("0X"):
-                                value = long(value, 16)
-                            else:
-                                value = long(value)
-                        emulator.writeRegister(reg, value)
+                    if reg is None:
+                        raise ValueError("unknown register: " + str(reg_name))
+                    # Convert value to int
+                    if isinstance(value, str):
+                        if value.startswith("0x") or value.startswith("0X"):
+                            value = int(value, 16)
+                        else:
+                            value = int(value)
+                    emulator.writeRegister(reg, value)
                 except Exception as e:
-                    # Skip invalid registers
-                    pass
+                    skipped_inputs.append({
+                        "kind": "register", "name": str(reg_name),
+                        "value": value if isinstance(value, (int, str)) else str(value),
+                        "reason": str(e)
+                    })
 
             # Set up memory inputs
             for addr_str, data in memory_inputs.items():
                 try:
                     addr = toAddr(addr_str)
-                    if addr is not None:
-                        if isinstance(data, list):
-                            # Array of bytes
-                            for i, byte_val in enumerate(data):
-                                emulator.writeMemoryValue(addr.add(i), 1, byte_val & 0xff)
-                        elif isinstance(data, str):
-                            # String data
-                            for i, char in enumerate(data):
-                                emulator.writeMemoryValue(addr.add(i), 1, ord(char))
-                        else:
-                            # Single value
-                            emulator.writeMemoryValue(addr, 4, long(data))
+                    if addr is None:
+                        raise ValueError("invalid address: " + str(addr_str))
+                    if isinstance(data, list):
+                        # Array of bytes
+                        for i, byte_val in enumerate(data):
+                            emulator.writeMemoryValue(addr.add(i), 1, byte_val & 0xff)
+                    elif isinstance(data, str) and not data.startswith(("0x", "0X")):
+                        # String data
+                        for i, char in enumerate(data):
+                            emulator.writeMemoryValue(addr.add(i), 1, ord(char))
+                    else:
+                        # Single value (int, or decimal/hex string)
+                        v = data
+                        if isinstance(v, str):
+                            v = int(v, 16) if v.startswith(("0x", "0X")) else int(v)
+                        emulator.writeMemoryValue(addr, 4, v)
                 except Exception as e:
-                    # Skip invalid memory writes
-                    pass
+                    skipped_inputs.append({
+                        "kind": "memory", "name": str(addr_str),
+                        "value": data if isinstance(data, (int, str)) else str(data),
+                        "reason": str(e)
+                    })
 
             # Set up execution starting at function entry
             emulator.writeRegister(emulator.getPCRegister(), entry_point.getOffset())
@@ -203,30 +215,41 @@ def run():
             # Track execution
             execution_trace = []
             step_count = 0
+            call_depth = 0
+            stop_reason = "max_steps"
 
-            # Execute until return or max steps
+            # Execute until the function returns or max steps are hit. Calls are
+            # followed into the callee: call_depth tracks how far we have wandered
+            # from the original function, and only leaving its body at depth 0
+            # counts as a return.
             while step_count < max_steps:
                 current_addr = emulator.getExecutionAddress()
 
                 if current_addr is None:
+                    stop_reason = "no_execution_address"
                     break
 
-                # Check if we've returned from function
-                if not func.getBody().contains(current_addr):
-                    # Check if we're at the instruction after a call to this function
-                    # or if we've returned
+                in_body = func.getBody().contains(current_addr)
+                if not in_body and call_depth == 0:
+                    # PC left the function without an outstanding call: returned
+                    stop_reason = "returned"
                     break
 
-                # Get current instruction
+                # Get current instruction (may be inside a callee)
                 inst = program.getListing().getInstructionAt(current_addr)
                 if inst is None:
+                    stop_reason = "no_instruction_at_pc"
                     break
+
+                flow = inst.getFlowType()
+                is_call = flow.isCall()
 
                 # Record trace
                 trace_entry = {
                     "step": step_count,
                     "address": str(current_addr),
-                    "instruction": inst.toString()
+                    "instruction": inst.toString(),
+                    "call_depth": call_depth
                 }
 
                 # Execute one instruction
@@ -235,18 +258,26 @@ def run():
                     if not success:
                         trace_entry["error"] = "Execution failed"
                         execution_trace.append(trace_entry)
+                        stop_reason = "execution_error"
                         break
                 except Exception as e:
                     trace_entry["error"] = str(e)
                     execution_trace.append(trace_entry)
+                    stop_reason = "execution_error"
                     break
 
                 execution_trace.append(trace_entry)
                 step_count += 1
 
-                # Check for return instruction
-                if inst.getFlowType().isTerminal():
-                    break
+                if is_call:
+                    call_depth += 1
+                elif flow.isTerminal():
+                    if call_depth > 0:
+                        # RET inside a callee: back to the caller's frame
+                        call_depth -= 1
+                    else:
+                        stop_reason = "returned"
+                        break
 
             # Collect final register states
             register_states = {}
@@ -292,6 +323,9 @@ def run():
                 "entry_point": str(entry_point),
                 "steps_executed": step_count,
                 "max_steps_reached": step_count >= max_steps,
+                "stop_reason": stop_reason,
+                "call_depth_at_stop": call_depth,
+                "skipped_inputs": skipped_inputs,
                 "register_states": register_states,
                 "execution_trace": execution_trace[:100],  # Limit trace to first 100 steps
                 "trace_truncated": len(execution_trace) > 100

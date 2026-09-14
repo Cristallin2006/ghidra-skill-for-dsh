@@ -83,15 +83,19 @@ def run():
             })
             return
 
-        # Get arguments
+        # Get arguments: [min_length] [pattern] [max_results]
         args = _DSH_ARGS
         min_length = int(args[0]) if args else 4
         pattern = args[1] if len(args) > 1 else None
+        max_results = int(args[2]) if len(args) > 2 else 5000
+        max_refs = 20
         pattern_regex = re.compile(pattern) if pattern else None
 
         # Collect strings from defined data
         listing = program.getListing()
         strings = []
+        truncated = False
+        total_matched = 0
 
         for data in listing.getDefinedData(True):
             if not data.hasStringValue():
@@ -108,11 +112,18 @@ def run():
                 if pattern_regex and not pattern_regex.search(value):
                     continue
 
+                total_matched += 1
+                if len(strings) >= max_results:
+                    truncated = True
+                    continue  # keep counting matches, stop collecting
+
                 address = data.getAddress()
 
                 # Get references to this string
                 refs = []
                 for ref in getReferencesTo(address):
+                    if len(refs) >= max_refs:
+                        break
                     from_addr = ref.getFromAddress()
                     # Get the function containing the reference
                     func = program.getFunctionManager().getFunctionContaining(from_addr)
@@ -137,12 +148,21 @@ def run():
                 # Skip strings that can't be processed
                 continue
 
-        # Sort by address
-        strings.sort(key=lambda x: x["address"])
+        # Sort numerically by address (lexicographic order is wrong for
+        # variable-length hex strings; fall back for non-hex address names)
+        def _addr_key(s):
+            try:
+                return (0, int(s["address"], 16))
+            except ValueError:
+                return (1, s["address"])
+        strings.sort(key=_addr_key)
 
         output_json({
             "status": "success",
             "string_count": len(strings),
+            "total_matched": total_matched,
+            "truncated": truncated,
+            "max_results": max_results,
             "min_length": min_length,
             "pattern": pattern,
             "strings": strings

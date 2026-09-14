@@ -72,5 +72,5 @@
 
 - 嵌入资源：`PK\x03\x04` 嵌入 ZIP；`readelf -s` 找 named symbols → dd 提取 → 纯离线解。
 - 批量立即数提取：`objdump -M intel -d binary | grep -P "cmp\s+rdi" | grep -oP "0x\w{1,2}" | xxd -r -p`——**Ghidra 侧等价物就是 headless 脚本**（scripting.md §8 决策树/XOR 提取模板）。
-- 补丁速查（pwntools）：`elf.asm(elf.symbols.ptrace, 'ret')`、`'nop'`、`'xor eax, eax; ret'`、`'mov eax, 1; ret'`；Ghidra 内 patch 用 `patch_bytes.py`，导出走 GUI（Export Program → Original File）。
+- 补丁速查（pwntools）：`elf.asm(elf.symbols.ptrace, 'ret')`、`'nop'`、`'xor eax, eax; ret'`、`'mov eax, 1; ret'`；Ghidra 内 patch 用 `patch_bytes.py`，导出用 `export_binary.py "@out" <路径>`（headless 直接导出 Original File 格式，不用开 GUI）。
 - JNZ(0x75)↔JZ(0x74) 互翻是最常见单字节 patch。

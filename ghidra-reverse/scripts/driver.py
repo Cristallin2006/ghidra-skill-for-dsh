@@ -11,6 +11,10 @@ Subcommands
   import <binary> [--force]
       Import a binary into the workspace project, run auto-analysis, and run
       triage_scan.py to produce out/<name>.triage.json.
+  export <binary> [--force]
+      Create a persistent, reusable project via Ghidra's own headless importer
+      (analyzeHeadless -import). Required before exec/exec-w, since a program
+      loaded by PyGhidra itself cannot be saved to the project.
   exec <binary> <script.py> [args...]
       Run a script against the project's program (read-only intent; scripts that
       write must use exec-w).
@@ -95,10 +99,17 @@ def project_root() -> Path:
         else:
             import subprocess
 
-            if link.exists():
-                import shutil
+            if link.exists() or link.is_symlink():
+                if link.is_symlink():
+                    # A junction/symlink: remove the reparse point only, never
+                    # the target (os.unlink on a junction raises PermissionError).
+                    os.rmdir(link)
+                elif link.is_dir():
+                    import shutil
 
-                shutil.rmtree(link, ignore_errors=True) if link.is_dir() and not link.is_symlink() else link.unlink(missing_ok=True)
+                    shutil.rmtree(link, ignore_errors=True)
+                else:
+                    link.unlink(missing_ok=True)
             subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(link), str(ws)],
                 check=True, capture_output=True, text=True,
@@ -112,8 +123,13 @@ def project_name_for(binary: Path) -> str:
     """Stable project name derived from the binary's content, as the skill documents."""
     import hashlib
 
-    digest = hashlib.sha256(binary.read_bytes()).hexdigest()[:16]
-    return f"dsh_{digest}"
+    # Hash in 1 MiB chunks: firmware images can be gigabytes, and read_bytes()
+    # would pull the whole file into memory.
+    hasher = hashlib.sha256()
+    with binary.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            hasher.update(chunk)
+    return f"dsh_{hasher.hexdigest()[:16]}"
 
 
 def script_dir() -> Path:
@@ -124,18 +140,14 @@ def run_script(script: Path, project, program, script_args, echo: bool = True):
     """Run one GhidraScript with currentProgram bound to `program`."""
     import pyghidra
 
-    before = sys.stdout
-    try:
-        return pyghidra.ghidra_script(
-            path=str(script),
-            project=project,
-            program=program,
-            script_args=list(script_args),
-            echo_stdout=echo,
-            echo_stderr=echo,
-        )
-    finally:
-        sys.stdout = before
+    return pyghidra.ghidra_script(
+        path=str(script),
+        project=project,
+        program=program,
+        script_args=list(script_args),
+        echo_stdout=echo,
+        echo_stderr=echo,
+    )
 
 
 # --------------------------------------------------------------------------- import
@@ -390,14 +402,15 @@ def cmd_exec(args: argparse.Namespace) -> int:
     project_path = project_root()
     gpr = project_path / f"{name}.gpr"
     if not gpr.exists():
-        raise SystemExit(f"project '{name}' not found - run: {Path(__file__).name} import {binary}")
+        raise SystemExit(f"project '{name}' not found - run: {Path(__file__).name} export {binary} "
+                         "(import creates a non-persistent project; only export persists it)")
 
     outer = project_path / f"{name}.exec.log"
     print(f"exec: project={name} script={script.name}")
 
     if script.suffix.lower() == ".java":
         # Java scripts go through analyzeHeadless; see run_java_script for why.
-        rc = run_java_script(binary, script, args.script_args, name, read_only=False,
+        rc = run_java_script(binary, script, args.script_args, name, read_only=not args.write,
                              extra_script_dirs=[ws / "scripts"])
         print(f"exec: done (log {ws / 'logs' / (name + '.' + script.stem + '.java.log')})")
         return rc

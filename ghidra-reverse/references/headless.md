@@ -7,18 +7,20 @@
 ## 1. driver.py 子命令（日常唯一入口）
 
 ```bash
-PY="C:/Users/Lenovo/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
+PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
 SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 
-"$PY" "$SK/driver.py" export <binary> [--force] [--overwrite]   # 建可复用项目（analyzeHeadless -import，一次性）
+"$PY" "$SK/driver.py" export <binary> [--force] [--overwrite] [--max-cpu N] [--analysis <超时秒>]  # 建可复用项目（analyzeHeadless -import，一次性）
 "$PY" "$SK/driver.py" import <binary> [--force] [--analysis minimal|default]  # 进程内导入+分析+triage（不落盘）
 "$PY" "$SK/driver.py" list <binary>                             # 列项目内程序
 "$PY" "$SK/driver.py" exec   <binary> <script.py> [args...]     # 只读执行
 "$PY" "$SK/driver.py" exec-w <binary> <script.py> [args...]     # 执行后保存项目（写操作必须用它）
+# 全局选项：-v / --verbose = verbose JVM 输出（排障时加在子命令前）
+# ⚠ import 与 export 的 --analysis 撞名不同义：import=分析器档位，export=单文件分析超时秒
 ```
 
 - 项目名：`dsh_<sha256(binary)前16>`，与二进制路径无关。
-- 分工：**export 负责持久化**（PyGhidra 存不下自己 load 的程序，SKILL.md §7.10），**import 负责一次性的进程内分析+分诊**。常规流程：`export` 一次建项目，之后全部 `exec`/`exec-w`。
+- 分工：**export 负责持久化**（PyGhidra 存不下自己 load 的程序，SKILL.md §7「持久化限制」），**import 负责一次性的进程内分析+分诊**。常规流程：`export` 一次建项目，之后全部 `exec`/`exec-w`。
 - 脚本名解析顺序：skill scripts 目录 → 当前目录 → `<ws>/scripts`。脚本参数原样透传，`@out` 约定照旧。
 - 环境变量：`GHIDRA_INSTALL_DIR`（Ghidra 安装目录）、`DSH_GHIDRA_WS`（工作区，默认 `~/.dsh/ghidra-workspace`）、`DSH_GHIDRA_WS_LINK`（无点 junction，默认 `~/dsh-ghidra-workspace`）、`PYGHIDRA_JAVA_HOME` / `JAVA_HOME`（必须是 JDK 不是 JRE）。
 
@@ -35,7 +37,7 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 - 脚本内 `getScriptArgs()` 拿参数（PyGhidra 下仍可用，脚本 globals 由 GhidraScript 实例懒取）。
 - **`@out` 约定**：首个参数 `@绝对路径` = 完整结果写该文件（JSON，`json.dumps` 默认 ensure_ascii 纯 ASCII 安全；伪代码等文本用 utf-8 errors=replace）；stdout 只留 `===JSON_START===/===JSON_END===` 状态摘要。
 - 为什么落文件：Ghidra 的 INFO 日志混 stdout；Windows 控制台编码毁非 ASCII；大输出被管道截断。文件 + Read 工具最稳。
-- driver 每次 exec 的完整 stdout/stderr 落在 `<ws>/<项目名>.exec.log`；分析日志在 `<ws>/logs/`。
+- driver 每次 exec 的完整 stdout/stderr 落在 `<junction>/projects/<项目名>.exec.log`；分析日志在 `<ws>/logs/`。
 
 ## 4. Windows / PyGhidra 坑（实测）
 
@@ -79,7 +81,7 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 
 ## 7. 排障顺序
 
-1. `<ws>/<项目名>.exec.log` 末尾 + `<ws>/logs/` 对应日志的 `ERROR` 行
+1. `<junction>/projects/<项目名>.exec.log` 末尾 + `<ws>/logs/` 对应日志的 `ERROR` 行
 2. `script not found` → 脚本名/路径；`project not found` → 先跑 `driver.py export`
 3. `ModuleNotFoundError: No module named 'ghidra'` → 有代码在 `pyghidra.start()` 之前 import 了 ghidra.*
 4. `ReadOnlyException` / 改了没保存 → 写操作用了 `exec` 而不是 `exec-w`

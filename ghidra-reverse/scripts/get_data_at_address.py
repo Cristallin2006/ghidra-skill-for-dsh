@@ -100,9 +100,14 @@ def run():
         listing = program.getListing()
         dtm = program.getDataTypeManager()
 
+        # Endianness of the target: all multi-byte decoding below is assembled
+        # little-endian, so big-endian programs need their bytes reversed first.
+        is_be = program.getLanguage().isBigEndian()
+
         result = {
             "status": "success",
-            "address": str(addr)
+            "address": str(addr),
+            "endianness": "big" if is_be else "little"
         }
 
         # Check if a data type was specified
@@ -127,6 +132,9 @@ def run():
                 except:
                     raw_bytes.append(0)
 
+            # le_bytes[i] is the i-th least significant byte, whatever the target
+            le_bytes = list(reversed(raw_bytes)) if is_be else raw_bytes
+
             result["type"] = type_name
             result["length"] = length
             result["bytes"] = " ".join(["%02x" % b for b in raw_bytes])
@@ -137,27 +145,26 @@ def run():
                 if 32 <= raw_bytes[0] < 127:
                     result["char"] = chr(raw_bytes[0])
             elif type_name in ["short", "word"]:
-                # Little-endian by default
-                result["value"] = raw_bytes[0] | (raw_bytes[1] << 8)
+                result["value"] = le_bytes[0] | (le_bytes[1] << 8)
                 result["value_signed"] = result["value"] if result["value"] < 0x8000 else result["value"] - 0x10000
             elif type_name in ["int", "dword", "long"]:
-                result["value"] = raw_bytes[0] | (raw_bytes[1] << 8) | (raw_bytes[2] << 16) | (raw_bytes[3] << 24)
+                result["value"] = le_bytes[0] | (le_bytes[1] << 8) | (le_bytes[2] << 16) | (le_bytes[3] << 24)
                 result["value_signed"] = result["value"] if result["value"] < 0x80000000 else result["value"] - 0x100000000
             elif type_name in ["longlong", "qword"]:
                 value = 0
                 for i in range(8):
-                    value |= raw_bytes[i] << (i * 8)
+                    value |= le_bytes[i] << (i * 8)
                 result["value"] = value
             elif type_name == "float":
                 import struct
-                result["value"] = struct.unpack('<f', bytes(bytearray(raw_bytes)))[0]
+                result["value"] = struct.unpack('>f' if is_be else '<f', bytes(bytearray(raw_bytes)))[0]
             elif type_name == "double":
                 import struct
-                result["value"] = struct.unpack('<d', bytes(bytearray(raw_bytes)))[0]
+                result["value"] = struct.unpack('>d' if is_be else '<d', bytes(bytearray(raw_bytes)))[0]
             elif type_name == "pointer":
                 value = 0
                 for i in range(length):
-                    value |= raw_bytes[i] << (i * 8)
+                    value |= le_bytes[i] << (i * 8)
                 result["value"] = "0x%x" % value
                 # Try to resolve what the pointer points to
                 ptr_addr = toAddr("0x%x" % value)

@@ -24,7 +24,18 @@ _DSH_ARGS = _dsh_extract_out()
 
 
 def run():
-    """Configure analysis options based on mode argument."""
+    """Deprecated: kept for reference only."""
+    import json
+    print("===JSON_START===")
+    print(json.dumps({
+        "status": "deprecated",
+        "note": "PyGhidra 流程下无 preScript 钩子，本脚本不会生效；"
+                "请用 driver.py import --analysis minimal|default 或 analysis_config.py"
+    }))
+    print("===JSON_END===")
+    return
+
+    # --- reference implementation below (unreachable) ---
     args = _DSH_ARGS
     mode = args[0].lower() if args else "default"
 

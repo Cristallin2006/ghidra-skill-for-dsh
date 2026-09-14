@@ -125,6 +125,12 @@ def collect_imports(program):
 
 
 def collect_exports_and_entries(program):
+    """Split external entry points into real exports vs. the likely entry point.
+
+    Ghidra marks both PE-exported symbols and the binary's entry point as
+    external entry points, and the symbol table alone cannot fully separate
+    them; the well-known entry names are the heuristic split.
+    """
     exports = []
     entries = []
     st = program.getSymbolTable()
@@ -135,11 +141,14 @@ def collect_exports_and_entries(program):
         addr = entry_iter.next()
         sym = st.getPrimarySymbol(addr)
         name = sym.getName() if sym is not None else str(addr)
-        entries.append({"name": name, "address": str(addr)})
-        block = mem.getBlock(addr)
-        # Exports live in initialized memory; keep entry points separate list
-        if block is not None:
-            exports.append({"name": name, "address": str(addr)})
+        rec = {"name": name, "address": str(addr)}
+        if name in ("entry", "main", "_start", "WinMain", "DllMain",
+                    "wWinMain", "mainCRTStartup", "wWinMainCRTStartup"):
+            rec["type"] = "entry_point"
+            entries.append(rec)
+        else:
+            rec["type"] = "export"
+            exports.append(rec)
     return exports, entries
 
 
@@ -221,6 +230,10 @@ def run():
         exports, entries = collect_exports_and_entries(program)
         result["exports"] = exports
         result["entry_points"] = entries
+        result["exports_note"] = (
+            "exports/entry_points are split from Ghidra's external-entry-point "
+            "set by well-known entry names (entry/main/_start/WinMain/...); "
+            "a stripped binary may classify its real entry as an export")
 
         # --- suspicious imports ---
         all_import_names = []

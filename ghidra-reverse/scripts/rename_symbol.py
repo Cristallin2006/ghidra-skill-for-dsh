@@ -128,7 +128,10 @@ def run():
                             symbol.setName(new_name, SourceType.USER_DEFINED)
                             symbol_type = str(symbol.getSymbolType())
                             address = str(addr)
-            else:
+
+            # Fall back to name lookup when the address path found nothing --
+            # this also covers symbols whose NAME is pure hex ("cafe", "dead").
+            if old_name is None:
                 # Try as function name
                 for func in fm.getFunctions(True):
                     if func.getName() == identifier:

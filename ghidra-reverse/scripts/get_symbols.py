@@ -139,63 +139,55 @@ def run():
             result["imports"] = imports
             result["import_count"] = len(imports)
 
-        # Get exports
+        # Get exports: only true external entry points (the PE export table and
+        # the entry point are both marked this way by Ghidra). The isGlobal loop
+        # below is NOT exports -- nearly every function symbol lives in the
+        # global namespace, so reporting it as exports would be the whole
+        # function table in disguise.
         if symbol_type in ["exports", "all"]:
             exports = []
+            seen_addrs = set()
 
-            # Check entry points and exported symbols
-            for symbol in symbol_table.getAllSymbols(True):
-                # Check if it's an entry point or exported
-                if symbol.isExternalEntryPoint() or symbol.getSource().toString() == "IMPORTED":
-                    continue
-
-                # Check for export flag or entry point
-                addr = symbol.getAddress()
+            for addr in symbol_table.getExternalEntryPointIterator():
                 if addr.isExternalAddress():
                     continue
-
-                # Get function if this is a function entry
+                seen_addrs.add(str(addr))
+                symbol = symbol_table.getPrimarySymbol(addr)
                 func = fm.getFunctionAt(addr)
-                if func and func.isExternal():
-                    continue
-
-                # Check if marked as entry point
-                is_entry = program.getSymbolTable().isExternalEntryPoint(addr)
-
-                if is_entry or symbol.getName() in ["main", "_start", "entry", "DllMain", "WinMain"]:
-                    export_info = {
-                        "name": symbol.getName(),
-                        "address": str(addr),
-                        "is_function": func is not None,
-                        "is_entry_point": is_entry
-                    }
-                    if func:
-                        export_info["signature"] = str(func.getSignature())
-                    exports.append(export_info)
-
-            # Also get symbols marked as global
-            for symbol in symbol_table.getAllSymbols(True):
-                if symbol.isGlobal() and not symbol.isExternal():
-                    addr = symbol.getAddress()
-                    if addr.isExternalAddress():
-                        continue
-                    # Check if already added
-                    existing = [e for e in exports if e.get("address") == str(addr)]
-                    if existing:
-                        continue
-                    func = fm.getFunctionAt(addr)
-                    if func and not func.isExternal():
-                        export_info = {
-                            "name": symbol.getName(),
-                            "address": str(addr),
-                            "is_function": True,
-                            "is_global": True,
-                            "signature": str(func.getSignature())
-                        }
-                        exports.append(export_info)
+                export_info = {
+                    "name": symbol.getName() if symbol else "unknown",
+                    "address": str(addr),
+                    "is_function": func is not None,
+                    "is_entry_point": True
+                }
+                if func:
+                    export_info["signature"] = str(func.getSignature())
+                exports.append(export_info)
 
             result["exports"] = exports
             result["export_count"] = len(exports)
+
+            # Global, non-external function symbols, kept under their own name
+            # so they cannot be mistaken for real exports.
+            global_functions = []
+            for symbol in symbol_table.getAllSymbols(True):
+                if symbol.isGlobal() and not symbol.isExternal():
+                    addr = symbol.getAddress()
+                    if addr.isExternalAddress() or str(addr) in seen_addrs:
+                        continue
+                    func = fm.getFunctionAt(addr)
+                    if func and not func.isExternal():
+                        global_functions.append({
+                            "name": symbol.getName(),
+                            "address": str(addr),
+                            "signature": str(func.getSignature())
+                        })
+
+            result["global_functions"] = global_functions
+            result["global_function_count"] = len(global_functions)
+            result["global_functions_note"] = (
+                "symbols in the global namespace; these are NOT exports, "
+                "just every function Ghidra knows about")
 
         # Get entry points specifically
         entry_points = []

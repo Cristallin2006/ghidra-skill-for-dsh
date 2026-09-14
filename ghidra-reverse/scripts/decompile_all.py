@@ -1,4 +1,5 @@
 # Decompile all (optionally filtered) functions to C pseudocode
+# Usage: [@out] [filter_regex] [timeout_seconds] [--limit N]
 # @category DSH.Reverse
 # @runtime PyGhidra
 
@@ -68,9 +69,39 @@ def run():
             emit({"status": "error", "error": "No program loaded"})
             return
 
-        args = _DSH_ARGS
-        filter_regex = args[0] if len(args) > 0 and args[0] else None
-        timeout = int(args[1]) if len(args) > 1 else 30
+        args = list(_DSH_ARGS)
+
+        # --limit N (or --limit=N) caps how many functions are decompiled;
+        # everything else stays positional: [filter_regex] [timeout_seconds].
+        limit = None
+        positional = []
+        i = 0
+        while i < len(args):
+            a = str(args[i])
+            if a == "--limit":
+                if i + 1 >= len(args):
+                    emit({"status": "error", "error": "--limit requires a value"})
+                    return
+                try:
+                    limit = int(args[i + 1])
+                except (TypeError, ValueError):
+                    emit({"status": "error",
+                          "error": "Invalid --limit value: %s" % args[i + 1]})
+                    return
+                i += 2
+            elif a.startswith("--limit="):
+                try:
+                    limit = int(a.split("=", 1)[1])
+                except ValueError:
+                    emit({"status": "error", "error": "Invalid --limit value: %s" % a})
+                    return
+                i += 1
+            else:
+                positional.append(a)
+                i += 1
+
+        filter_regex = positional[0] if len(positional) > 0 and positional[0] else None
+        timeout = int(positional[1]) if len(positional) > 1 else 30
 
         name_re = None
         if filter_regex:
@@ -101,6 +132,8 @@ def run():
                     continue
                 if name_re is not None and not name_re.search(func.getName()):
                     continue
+                if limit is not None and total >= limit:
+                    break
 
                 total += 1
                 fname = func.getName()
@@ -153,7 +186,9 @@ def run():
             "total": total,
             "succeeded": succeeded,
             "failed": len(failed),
-            "failed_functions": failed
+            "failed_functions": failed,
+            "limit": limit,
+            "limit_reached": limit is not None and total >= limit
         }
         if c_path:
             result["c_out"] = c_path

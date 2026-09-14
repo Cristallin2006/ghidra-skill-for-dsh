@@ -35,8 +35,8 @@ EOF
 
 ```python
 # @category DSH.Reverse
-# @runtime Jython
-import json, codecs
+# @runtime PyGhidra
+import json
 
 def output_json(data, out_path=None):
     if out_path:
@@ -146,17 +146,16 @@ finally:
     program.endTransaction(tid, success)
 ```
 
-- headless 保存机制：命令行**省略 `-readOnly`**，进程退出时自动保存项目。
+- headless 保存机制（PyGhidra 流程）：写操作脚本用 `driver.py exec-w` 运行，driver 在脚本结束后显式 `program.save()`；`exec` 不会落盘。`-readOnly` 旧语义仅存在于 `.java` 脚本走的 analyzeHeadless 分支。
 - 注释：`from ghidra.program.model.listing import CommentType` → `codeUnit.setComment(CommentType.PLATE, text)`（12.x 枚举；旧的 `CodeUnit.PLATE_COMMENT` int 常量仍可用但已 deprecated，新代码别用）。
 - 改签名：`FunctionSignatureParser(dtm, None).parse(func.getSignature(), sig_str)` + `ApplyFunctionSignatureCmd(entry, new_sig, SourceType.USER_DEFINED).applyTo(program)`。
 
-## 7. Jython / Java 互操作坑
+## 7. Java 互操作坑（PyGhidra / JPype）
 
-- `memory.getByte(addr)` 返回**有符号** Java byte → 必须 `b & 0xff`；`setByte` 同理收有符号值。
-- Java byte 数组：`from jarray import array; array([b if b < 128 else b - 256 for b in bs], 'b')`。
-- 格式化：`"%02x" % b`、`"0x%x" % val`（无 f-string）。
-- `long("4141", 16)` 在 Jython 可用；若移植 PyGhidra 记得 `long`→`int`、`jarray`→`array.array`。
-- 手工拼多字节值时注意端序：`sum((b & 0xff) << (8*i) for i,b in enumerate(raw))` 是**小端**假设。
+- `memory.getByte(addr)` 返回**有符号** Java byte → 必须 `b & 0xff`；`setByte` 同理收有符号值（`>127` 的 Python int 会 `OverflowError`）。
+- Java byte 数组：`jpype.JArray(jpype.JByte)([b if b < 128 else b - 256 for b in bs])`（Jython 的 `from jarray import array` 在 PyGhidra 下不存在）。
+- Python 3 随便用 f-string；`long()` 不存在，用 `int()`。
+- 手工拼多字节值时注意端序：`sum((b & 0xff) << (8*i) for i,b in enumerate(raw))` 是**小端**假设；大端目标要反转（`program.getLanguage().isBigEndian()`）。
 
 ## 8. 实用模板
 

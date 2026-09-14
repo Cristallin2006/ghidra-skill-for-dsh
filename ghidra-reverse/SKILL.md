@@ -16,7 +16,7 @@ whenToUse: 收到未知二进制需要分诊、反编译、提取算法、批量
 - `GHIDRA_HOME = C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC`（含 `support/` 的内层目录）
 - 运行方式：**PyGhidra**（`scripts/driver.py`）。GUI：`%GHIDRA_HOME%\ghidraRun.bat`
 - **JDK 21+**（本机 `C:\Java`，Java 25），且必须是 JDK 而非 JRE——PyGhidra 通过 JPype 起 JVM
-- **Python 环境**：`C:\Users\Lenovo\Desktop\src\ghidra-bridge\pyghidra-venv`（pyghidra 3.1.0 + JPype1 1.5.2，从 Ghidra 自带 wheel 离线装好）。调用时用该 venv 的 `Scripts\python.exe`
+- **Python 环境**：`$HOME/Desktop/src/ghidra-bridge/pyghidra-venv`（pyghidra 3.1.0 + JPype1 1.5.2，从 Ghidra 自带 wheel 离线装好）。调用时用该 venv 的 `Scripts/python.exe`
 - 工作区：`~/.dsh/ghidra-workspace/`（`projects/` 项目缓存、`out/` 产物、`logs/` 日志）
 - **传给 Ghidra 的路径必须走 junction `~/dsh-ghidra-workspace`**：Ghidra 的 `ProjectLocator` 拒绝任何以 `.` 开头的路径元素（`~/.dsh/...` 会 abort）。`driver.py` 的 `project_root()` 自动建/复用该 junction，物理位置不变
 
@@ -41,7 +41,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 另外注意：**PyGhidra 启动器下 `analyzeHeadless` 完全不可用**——把 `.py` 交给它会得到 `Ghidra was not started with PyGhidra. Python is not available`。所以一旦选 PyGhidra，就必须整条链走 `driver.py`。
 
-全部 21 个脚本已移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（`run-headless.sh` 已废弃，见 §2）。移植后实测 20/21 可跑，剩余差异见 §7。
+上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个，**脚本目录现有 25 个任务脚本**（+ `driver.py` + `analysis_config.py`，共 27 个 `.py`），实测全部可用（移植期间修的三个问题见 §7）。
 
 ## 1. 六条铁律（先读这个再动手）
 
@@ -55,10 +55,10 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 ## 2. 快速上手（3 行）
 
 ```bash
-PY="C:/Users/Lenovo/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
+PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
 SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 
-# 1) 建可复用项目（走 Ghidra 自带 headless 导入器；PyGhidra 自己存不下来，见 §7.10）
+# 1) 建可复用项目（走 Ghidra 自带 headless 导入器；PyGhidra 自己存不下来，见 §7「持久化限制」）
 "$PY" "$SK/driver.py" export /path/to/binary
 
 # 2) 导入 + 全量分析 + 一键分诊 → out/<名>.triage.json（进程内，不落盘）
@@ -72,7 +72,8 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 "$PY" "$SK/driver.py" exec-w /path/to/binary rename_symbol.py 0x401000 check_flag
 ```
 
-子命令：`list` / `export [--force]` / `import [--force] [--analysis minimal|default]` / `exec` / `exec-w`（存盘）。
+子命令：`list` / `export [--force] [--overwrite] [--max-cpu N] [--analysis <超时秒>]` / `import [--force] [--analysis minimal|default]` / `exec` / `exec-w`（存盘）/ 全局 `-v`（verbose JVM 输出）。
+⚠ import 与 export 的 `--analysis` **撞名不同义**：import 的是分析器档位，export 的是单文件分析超时秒数。
 项目名按二进制 SHA-256 前 16 位固定为 `dsh_<hash>`，与二进制路径无关。
 
 需要 GUI 深挖（图形化 CFG、手动 patch 导出）时跑 `ghidraRun.bat`，打开 `~/.dsh/ghidra-workspace/projects/` 里的同名项目——headless 标注全部已保存。
@@ -101,7 +102,7 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 - 命中反调试/混淆 → 查 `references/anti-analysis.md`（识别清单、Check→Bypass 对照、OLLVM 分层）
 - 自定义解密 stub 不想脱壳 → EmulatorHelper 仿真模板见 `references/scripting.md` §仿真
 - 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `get_disassembly.py` 汇编
-- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用插件的 `ghidra_query mode=disassembly`（`offset` 翻页、`hasMore` 判断、带 `bytes` 原始字节），或 `get_disassembly.py`
+- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `get_disassembly.py`（带 `bytes` 原始字节）；若装了外部 reverse-ghidra 插件，也可用其 `ghidra_query mode=disassembly`（`offset` 翻页、`hasMore` 判断）
 
 ### 阶段 4 — Annotate / Patch / 交付
 - 写操作落盘用 `exec-w`：`driver.py exec-w <bin> rename_symbol.py 0x401000 check_flag`
@@ -112,7 +113,7 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 ## 4. 裸命令模板（排障时才需要；日常用 `driver.py`）
 
 ```bash
-PY="C:/Users/Lenovo/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
+PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
 GH="C:/t001s/ghidra_12.1.3_PUBLIC_20260817/ghidra_12.1.3_PUBLIC"
 WS="$HOME/dsh-ghidra-workspace"   # junction → ~/.dsh/ghidra-workspace；Ghidra 拒绝含 . 的路径元素，必须用 junction
 
@@ -123,9 +124,8 @@ export JAVA_HOME="C:/Java"
 "$PY" -m pyghidra --project-path "$WS/projects" --project-name dsh_<hash> \
   "C:/abs/path/binary.exe" "$SK/triage_scan.py" "@$WS/out/binary.exe.triage.json"
 
-# 注意：pyghidra CLI 只接受 **一个** 脚本位置参数，脚本参数必须紧跟其后；
-# 再多一个位置参数会被当成第二个脚本路径。复杂调用请直接用 driver.py，
-# 它走 pyghidra.ghidra_script(path, project, program, script_args=[...]) 这个稳定 API。
+# 注意：pyghidra 3.1.0 已支持脚本参数透传（脚本路径后的参数全部进 script_args）。
+# 但日常仍推荐 driver.py：脚本名解析（skill 目录/cwd/ws scripts）、exec-w 存盘、日志落盘。
 ```
 
 `analyzeHeadless.bat` 仍然可用，但**只能跑 `@runtime` 不是 PyGhidra 的脚本（即 `.java`）**；对 `.py` 会报 Jython 缺失。全部参数细节与 Windows 坑 → `references/headless.md`。
@@ -138,7 +138,7 @@ export JAVA_HOME="C:/Java"
 |---|---|---|
 | `triage_scan.py` | 一键分诊报告（本 skill 入口） | — |
 | `analyze_binary.py` | 程序元数据握手 | — |
-| `decompile_all.py` | 批量导出全函数伪码到 `.c` | `[regex] [超时秒]` |
+| `decompile_all.py` | 批量导出全函数伪码到 `.c` | `[regex] [超时秒] [--limit N]` |
 | `decompile_function.py` | 函数伪码 + 局部变量；**支持一次多个目标** | 函数[,函数…] |
 | `get_disassembly.py` | 反汇编（函数/地址范围） | 起点, [终点], [上限500] |
 | `list_functions.py` | 列函数（过滤+分页） | [regex], limit:N, offset:N |
@@ -163,6 +163,15 @@ export JAVA_HOME="C:/Java"
 | `apply_data_type.py` ✎ | 把类型套到地址上（createData） | [@out], 地址, 类型名 |
 
 ✎ = 写操作：用 `exec-w` 才会保存。⚠ `exec_code.py` 是无沙箱任意代码执行——开放整个 Ghidra API 的逃生舱，清单内脚本不够用时就写个代码文件喂给它，别为此新建一次性脚本。写自定义脚本看 `references/scripting.md`。
+
+**类型库两步走必须都用 `exec-w`**（实测踩过）：`apply_c_types.py` 在只读运行里能成功解析并返回 `types_added`（如 `["/aegis_hdr","/aegis_op", …]`），**但类型不会落盘**，下一次 `apply_data_type.py` 立刻报
+`{"status":"error","error":"Data type not found: aegis_hdr"}`。正确顺序：
+
+```bash
+driver.py exec-w <bin> apply_c_types.py  "@out/types.json" mytypes.h   # 定义并保存
+driver.py exec-w <bin> apply_data_type.py "@out/applied.json" 0x101300 aegis_hdr
+```
+不想落盘就两步合并进一个 `exec_code.py` 代码文件，一次运行内完成定义+套用。
 
 ### 执行模型（两条路，driver 自动分流）
 - **`.py`（PyGhidra 脚本）** → 走 `pyghidra.ghidra_script()`。要用**绝对路径**给 `-scriptPath` 之外的脚本；脚本名解析顺序是 skill 目录 → 当前目录 → `<ws>/scripts`
@@ -189,7 +198,7 @@ export JAVA_HOME="C:/Java"
 
 1. **`.py` 不能交给 `analyzeHeadless`**（在 PyGhidra 流程下）：那会起普通 JVM，报 Jython 缺失。注意这条与 §0 的 APPDATA 重定向是**两个独立原因**——即使装上 Jython 扩展，PyGhidra 启动器也不认 `analyzeHeadless`。
 2. **`pyghidra.start()` 必须在任何 `ghidra.*` import 之前**：否则 `ModuleNotFoundError: No module named 'ghidra'`。`driver.py` 的 `main()` 里处理。
-3. **`pyghidra` CLI 的位置参数很窄**：`binary_path script_path script_args...`，且只接受**一个**脚本位置参数；多给一个会被当第二个脚本路径。传 `@out` 这类参数要用 `driver.py`（走 `pyghidra.ghidra_script(..., script_args=[...])`）。
+3. **（旧版认知，已过期）`pyghidra` CLI 参数透传**：早期记录称 CLI 只接受一个脚本位置参数；实测 pyghidra 3.1.0 已把脚本后的参数全部传入 `script_args`，裸 CLI 可用。driver.py 仍走 `pyghidra.ghidra_script(..., script_args=[...])` 这个稳定 API，多一层脚本名解析和 exec-w 存盘。
 4. **`program_loader().load()` 返回的是 `LoadResults` 而不是 `Program`**：要 `results.getPrimaryDomainObject()`，并且 `LoadResults` 是 `AutoCloseable`，用 `close()` 释放。
 5. **`walk_programs(project, callback, ...)` 是回调式**，不是可迭代对象。它会在**自己的 program 上下文里**打开每个程序，所以不要在回调里长期持有 `program`。
 6. **`open_project(path, name, create)`**：path 是**父目录**，不是 `.gpr` 文件；`ProjectLocator` 拒绝含 `.` 的路径元素（所以走 junction）。
@@ -209,11 +218,17 @@ export JAVA_HOME="C:/Java"
 
 ### 实测覆盖（对 AegisTrace 的 stripped ELF，96 函数）
 
-**全部 21 个脚本 + `analysis_config` 均可用**：`triage_scan` `analyze_binary` `get_memory_map` `get_symbols` `list_functions` `decompile_function` `decompile_all` `get_disassembly` `get_xrefs` `get_call_graph` `get_basic_blocks` `search_strings` `search_bytes` `get_data_at_address` `list_classes` `emulate_function` `add_comment` `set_function_signature` `rename_symbol`（地址或名字）`patch_bytes`（含写权限授予）
+**上游 21 个脚本 + `analysis_config` 均可用**：`triage_scan` `analyze_binary` `get_memory_map` `get_symbols` `list_functions` `decompile_function` `decompile_all` `get_disassembly` `get_xrefs` `get_call_graph` `get_basic_blocks` `search_strings` `search_bytes` `get_data_at_address` `list_classes` `emulate_function` `add_comment` `set_function_signature` `rename_symbol`（地址或名字）`patch_bytes`（含写权限授予）`set_analysis_options`（已被 `analysis_config.py` 取代，保留仅作参考）
 
-`__pycache__` 不必提交；脚本目录保持 21 个 `.py` + `driver.py` + `analysis_config.py` + `run-headless.sh`。
+**本 skill 新增 4 个，同样实测通过**（同一 stripped ELF）：`exec_code` `export_binary` `apply_c_types` `apply_data_type`
+- `exec_code.py` —— 文档承诺的名字空间逐个验证存在：`program`/`listing`/`memory`/`fm`/`toAddr`/`find_function`/`output_json` 全部可用（`fm.getFunctionCount() == 96`）
+- `export_binary.py` —— 导出 18576 字节，与原文件 **SHA256 完全一致**；同时返回 `md5`/`original_md5` 便于确认补丁是否生效
+- `apply_c_types.py` —— 解析出 14 个类型（`/aegis_hdr`、`/aegis_op` + 12 个 stdint typedef）
+- `apply_data_type.py` —— 需前一步**已落盘**，见 §5 类型库两步走
 
-### 10. PyGhidra 存不下自己加载的程序（已用 `export` 绕过）
+**脚本目录 = 25 个任务 `.py` + `driver.py` + `analysis_config.py`（共 27 个），无 shell 脚本**。`run-headless.sh` 曾在目录里，现已删除；`analyzeHeadless` 只由 `driver.py` 的 `.java` 分支调用，不要直接用它跑 `.py`。`__pycache__` 不必提交。
+
+### PyGhidra 持久化限制：存不下自己加载的程序（已用 `export` 绕过）
 
 `driver.py import` **不能把项目落盘**：`program_loader().load()` 返回的程序在一个报告只读的 `DomainFileProxy` 后面，而
 `DomainFile.setReadOnly()` 在 proxy 上抛 `UnsupportedOperationException`、`ProgramDB` 又没有 `setChanged`，
@@ -243,6 +258,7 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 | 导出 patched 二进制 | `export_binary.py`（多 FileBytes 的固件镜像未测，可能按目录导出） |
 | 分析器选项调优 | `driver.py import --analysis minimal|default`（`analysis_config.py`）；旧 `set_analysis_options.py` 在 PyGhidra 流程无钩子可挂，仅作参考 |
 | 清单外 API 调用 | `exec_code.py` 逃生舱 |
+| `@out`/导出/输入文件路径无白名单 | **已接受风险**（本地单机威胁模型）。`exec_code.py` 是无沙箱 exec、`@out` 可写任意路径——不要把本 skill 暴露给不可信调用方 |
 
 ## 9. References（按需加载，别一次全读）
 
