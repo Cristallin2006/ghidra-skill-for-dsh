@@ -14,7 +14,7 @@ whenToUse: 收到未知二进制需要分诊、反编译、提取算法、批量
 ## 0. 环境（本机已配好）
 
 - `GHIDRA_HOME = C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC`（含 `support/` 的内层目录）
-- 运行方式：**PyGhidra**（`scripts/driver.py`）。GUI：`%GHIDRA_HOME%\ghidraRun.bat`
+- 运行方式：**PyGhidra**（`scripts/driver.py`）。GUI：`scripts/launch_gui.py`（见 §2「GUI」节）
 - **JDK 21+**（本机 `C:\Java`，Java 25），且必须是 JDK 而非 JRE——PyGhidra 通过 JPype 起 JVM
 - **Python 环境**：`$HOME/Desktop/src/ghidra-bridge/pyghidra-venv`（pyghidra 3.1.0 + JPype1 1.5.2，从 Ghidra 自带 wheel 离线装好）。调用时用该 venv 的 `Scripts/python.exe`
 - 工作区：`~/.dsh/ghidra-workspace/`（`projects/` 项目缓存、`out/` 产物、`logs/` 日志）
@@ -24,7 +24,7 @@ whenToUse: 收到未知二进制需要分诊、反编译、提取算法、批量
 
 **Jython 扩展本身是装好的**，就在 `%APPDATA%\ghidra\ghidra_12.1.3_PUBLIC\Extensions\Jython`（内含 `jython-2.7.4\Lib`）。用 GUI（`ghidraRun.bat`，不重定向 APPDATA）跑，原本的 `@runtime Jython` 脚本是能用的。
 
-真正的坑是 **APPDATA 重定向**：为了满足 DSH 的文件沙箱（只允许写工作区），插件和 driver 都把 `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`TMP` 指到工作区内的 settings 目录。Ghidra 于是去 `<被重定向的 settings>\ghidra\ghidra_12.1.3_PUBLIC\Extensions\` 找扩展——**那里没有 Jython**，于是报：
+真正的坑是 **APPDATA 重定向**：为了满足 DSH 的文件沙箱（只允许写工作区），driver 把 `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`TMP` 指到工作区内的 settings 目录。Ghidra 于是去 `<被重定向的 settings>\ghidra\ghidra_12.1.3_PUBLIC\Extensions\` 找扩展——**那里没有 Jython**，于是报：
 
 ```
 ghidra.app.script.JythonStubScriptProvider$JythonStubException:
@@ -76,7 +76,42 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 ⚠ import 与 export 的 `--analysis` **撞名不同义**：import 的是分析器档位，export 的是单文件分析超时秒数。
 项目名按二进制 SHA-256 前 16 位固定为 `dsh_<hash>`，与二进制路径无关。
 
-需要 GUI 深挖（图形化 CFG、手动 patch 导出）时跑 `ghidraRun.bat`，打开 `~/.dsh/ghidra-workspace/projects/` 里的同名项目——headless 标注全部已保存。
+需要 GUI 深挖（图形化 CFG、交互式分析）时用 `scripts/launch_gui.py` 拉起 Ghidra 并直接打开对应项目（见下「GUI」节）——headless 标注全部已保存。
+
+### 长任务（后台执行）
+
+driver.py 的一次调用 = JVM 冷启动 + 分析，大二进制可能跑几分钟到几十分钟。**一律用 dsh Bash 工具的 `run_in_background` 跑长任务**，靠 `@out` 落盘拿结果，不要前台干等：
+
+```bash
+# 后台跑全量反编译（--limit 控制规模），结果落 @out 文件
+"$PY" "$SK/driver.py" exec /path/to/big.bin decompile_all.py \
+    "@$HOME/.dsh/ghidra-workspace/out/big.decompile.json"
+# → 拿到 task_id 后继续干别的；完成通知到达后：
+#    Read ~/.dsh/ghidra-workspace/out/big.decompile.json      （汇总 + failed 清单）
+#    Read ~/.dsh/ghidra-workspace/out/big.decompile.json.c    （全部伪码）
+```
+
+判断完成的信号是 `@out` 文件出现且 JSON 有效；stdout 摘要行只有几行，不要从前台输出抠大结果。
+
+### GUI（launch_gui.py）
+
+```bash
+python "$SK/launch_gui.py"                      # 裸启动 Ghidra GUI
+python "$SK/launch_gui.py" --open /path/to/bin  # 打开该二进制的 dsh_<hash> 项目
+python "$SK/launch_gui.py" --project dsh_<hash> # 按项目名打开
+```
+
+detached 启动，脚本立即返回 PID，GUI 输出进 `logs/gui-launch.log`；关闭用 `taskkill //PID <pid> //F` 或 GUI 内退出。GUI 以 `USERNAME=dsh` 启动（与 headless 创建的项目的属主一致，不会 NotOwnerException），settings 用真实用户目录。
+
+**何时该去 GUI**：交互式 CFG/函数图深挖、人工比对多个函数、type archive（FIDB）制作、plugin 类交互工具（GOOMBA 等）。**headless 已覆盖的事别去 GUI**：导出 patched 二进制（`export_binary.py`）、patch（`patch_bytes.py`）、批量反编译、分诊。
+
+### 环境自检（doctor.py）
+
+```bash
+python "$SK/doctor.py"          # 全绿 exit 0；任一 fail exit 1
+```
+
+检查：Ghidra 安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv 可 import 及版本、工作区可写 + junction 解析、现有项目清单。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
 
 ## 3. 工作流（四阶段）
 
@@ -102,7 +137,7 @@ SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
 - 命中反调试/混淆 → 查 `references/anti-analysis.md`（识别清单、Check→Bypass 对照、OLLVM 分层）
 - 自定义解密 stub 不想脱壳 → EmulatorHelper 仿真模板见 `references/scripting.md` §仿真
 - 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `get_disassembly.py` 汇编
-- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `get_disassembly.py`（带 `bytes` 原始字节）；若装了外部 reverse-ghidra 插件，也可用其 `ghidra_query mode=disassembly`（`offset` 翻页、`hasMore` 判断）
+- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `get_disassembly.py`（`offset` 翻页靠地址范围参数、`hasMore` 靠 `truncated` 字段、带 `bytes` 原始字节）
 
 ### 阶段 4 — Annotate / Patch / 交付
 - 写操作落盘用 `exec-w`：`driver.py exec-w <bin> rename_symbol.py 0x401000 check_flag`
@@ -161,8 +196,10 @@ export JAVA_HOME="C:/Java"
 | `export_binary.py` | headless 导出 patched 二进制（Original File 格式） | [@out], 导出路径 |
 | `apply_c_types.py` ✎ | C 语法定义 struct/enum 进类型库（自动补 stdint typedef） | [@out], C声明文件 |
 | `apply_data_type.py` ✎ | 把类型套到地址上（createData） | [@out], 地址, 类型名 |
+| `launch_gui.py` ◈ | detached 拉起 Ghidra GUI，可直接打开项目 | [--open 二进制] [--project 名] |
+| `doctor.py` ◈ | 环境自检（安装/JDK/venv/工作区/项目），全绿 exit 0 | [@out] |
 
-✎ = 写操作：用 `exec-w` 才会保存。⚠ `exec_code.py` 是无沙箱任意代码执行——开放整个 Ghidra API 的逃生舱，清单内脚本不够用时就写个代码文件喂给它，别为此新建一次性脚本。写自定义脚本看 `references/scripting.md`。
+✎ = 写操作：用 `exec-w` 才会保存。◈ = 宿主机工具脚本：直接用 venv/系统 python 运行（`python scripts/xxx.py`），不经 `driver.py exec`。⚠ `exec_code.py` 是无沙箱任意代码执行——开放整个 Ghidra API 的逃生舱，清单内脚本不够用时就写个代码文件喂给它，别为此新建一次性脚本。写自定义脚本看 `references/scripting.md`。
 
 **类型库两步走必须都用 `exec-w`**（实测踩过）：`apply_c_types.py` 在只读运行里能成功解析并返回 `types_added`（如 `["/aegis_hdr","/aegis_op", …]`），**但类型不会落盘**，下一次 `apply_data_type.py` 立刻报
 `{"status":"error","error":"Data type not found: aegis_hdr"}`。正确顺序：

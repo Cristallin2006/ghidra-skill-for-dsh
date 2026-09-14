@@ -297,8 +297,11 @@ def cmd_export(args: argparse.Namespace) -> int:
     settings.mkdir(parents=True, exist_ok=True)
     for key in ("APPDATA", "LOCALAPPDATA", "USERPROFILE"):
         env[key] = str(settings)
-    env.setdefault("USERNAME", "dsh")
-    env.setdefault("USERDOMAIN", "DSH")
+    # Force the project owner identity: the host USERNAME (e.g. Lenovo) must not
+    # leak through, or opening a project created by this skill raises
+    # NotOwnerException. All projects are owned by "dsh".
+    env["USERNAME"] = "dsh"
+    env["USERDOMAIN"] = "DSH"
 
     argv = [str(headless), str(project_root()), name, "-import", str(binary)]
     if args.overwrite:
@@ -360,8 +363,11 @@ def run_java_script(binary: Path, script: Path, script_args, name: str, read_onl
     settings.mkdir(parents=True, exist_ok=True)
     for key in ("APPDATA", "LOCALAPPDATA", "USERPROFILE"):
         env[key] = str(settings)
-    env.setdefault("USERNAME", "dsh")
-    env.setdefault("USERDOMAIN", "DSH")
+    # Force the project owner identity: the host USERNAME (e.g. Lenovo) must not
+    # leak through, or opening a project created by this skill raises
+    # NotOwnerException. All projects are owned by "dsh".
+    env["USERNAME"] = "dsh"
+    env["USERDOMAIN"] = "DSH"
 
     dirs = [_as_posix(script.parent)]
     dirs += [_as_posix(d) for d in extra_script_dirs if Path(d).is_dir()]
@@ -487,6 +493,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     install = _configure_environment()
+
+    # Force the project owner identity in this process too, before the JVM and
+    # Ghidra come up: opening a project owned by someone else raises
+    # NotOwnerException, and all skill-created projects belong to "dsh".
+    os.environ["USERNAME"] = "dsh"
+    os.environ["USERDOMAIN"] = "DSH"
 
     # The JVM must be up before any ghidra.* import; every pyghidra API call
     # below assumes a started launcher.
