@@ -103,6 +103,62 @@ def main() -> int:
     except Exception as exc:
         results.append(check("projects", False, str(exc)))
 
+    # 6. ghidra-rpc venv (engine environment)
+    rpc_venv_python = Path.home() / "Desktop" / "src" / "ghidra-bridge" / \
+        "ghidra-rpc-venv" / "Scripts" / "python.exe"
+    if not rpc_venv_python.is_file():
+        results.append(check("rpc_venv", False,
+                             f"venv python not found at {rpc_venv_python}"))
+    else:
+        results.append(check("rpc_venv", True, f"python={rpc_venv_python}"))
+
+    # 7. ghidra-rpc importable + version (editable install of engine/)
+    if rpc_venv_python.is_file():
+        try:
+            proc = subprocess.run(
+                [str(rpc_venv_python), "-c",
+                 "import importlib.metadata, ghidra_rpc; "
+                 "print(importlib.metadata.version('ghidra-rpc')); "
+                 "print(ghidra_rpc.__file__)"],
+                capture_output=True, text=True, timeout=60)
+            lines = (proc.stdout or "").strip().splitlines()
+            ver = lines[0] if lines else ""
+            loc = lines[1] if len(lines) > 1 else ""
+            ok = proc.returncode == 0 and ver and "engine" in loc.replace("/", "\\")
+            results.append(check("rpc_package", bool(ok),
+                                 f"version={ver} location={loc}"
+                                 + ("" if ok else " (expected editable install from skill engine/)")))
+        except Exception as exc:
+            results.append(check("rpc_package", False, str(exc)))
+
+    # 8. daemon start/stop smoke (slow: one JVM cold start, ~30-60 s)
+    if "--quick" not in sys.argv:
+        try:
+            import rpc_driver  # sibling script
+            env = rpc_driver.configure_env()
+            probe_gpr = rpc_driver.WS_LINK / "projects-rpc" / "doctor_probe.gpr"
+            start = rpc_driver.run_rpc(env, probe_gpr,
+                                       ["start", "--headless", "--detach"], timeout=300)
+            if not start.get("ok"):
+                results.append(check("rpc_daemon", False,
+                                     f"start failed: {str(start)[:200]}"))
+            else:
+                status = rpc_driver.run_rpc(env, probe_gpr, ["status"], timeout=60)
+                running = bool((status.get("result") or {}).get("running"))
+                stop = rpc_driver.run_rpc(env, probe_gpr, ["stop"], timeout=120)
+                stopped = bool((stop.get("result") or {}).get("status") == "stopped") \
+                    or stop.get("ok")
+                ok = running and stopped
+                results.append(check("rpc_daemon", ok,
+                                     f"start=ok running={running} stop_ok={stopped}"))
+                # probe project is empty; remove it
+                import shutil
+                shutil.rmtree(probe_gpr.parent / "doctor_probe.rep",
+                              ignore_errors=True)
+                (probe_gpr.parent / "doctor_probe.gpr").unlink(missing_ok=True)
+        except Exception as exc:
+            results.append(check("rpc_daemon", False, str(exc)))
+
     all_ok = all(r["ok"] for r in results)
     summary = {"status": "ok" if all_ok else "fail", "checks": results}
     text = json.dumps(summary, ensure_ascii=False, indent=2)

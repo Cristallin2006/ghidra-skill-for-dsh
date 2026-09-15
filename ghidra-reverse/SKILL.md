@@ -14,11 +14,13 @@ whenToUse: 收到未知二进制需要分诊、反编译、提取算法、批量
 ## 0. 环境（本机已配好）
 
 - `GHIDRA_HOME = C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC`（含 `support/` 的内层目录）
-- 运行方式：**PyGhidra**（`scripts/driver.py`）。GUI：`scripts/launch_gui.py`（见 §2「GUI」节）
+- 执行引擎：**ghidra-rpc 常驻 daemon**（vendor 在 `engine/ghidra-rpc/`，上游 Cellebrite Labs 0.2.0 + dsh 补丁，见 `engine/VENDOR.md`）。统一入口 `scripts/rpc_driver.py`；GUI 用 `scripts/launch_gui.py`（见 §2「GUI」节）
 - **JDK 21+**（本机 `C:\Java`，Java 25），且必须是 JDK 而非 JRE——PyGhidra 通过 JPype 起 JVM
-- **Python 环境**：`$HOME/Desktop/src/ghidra-bridge/pyghidra-venv`（pyghidra 3.1.0 + JPype1 1.5.2，从 Ghidra 自带 wheel 离线装好）。调用时用该 venv 的 `Scripts/python.exe`
-- 工作区：`~/.dsh/ghidra-workspace/`（`projects/` 项目缓存、`out/` 产物、`logs/` 日志）
-- **传给 Ghidra 的路径必须走 junction `~/dsh-ghidra-workspace`**：Ghidra 的 `ProjectLocator` 拒绝任何以 `.` 开头的路径元素（`~/.dsh/...` 会 abort）。`driver.py` 的 `project_root()` 自动建/复用该 junction，物理位置不变
+- **Python 环境 ×2**：
+  - 引擎 venv：`$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv`（Python 3.12；ghidra-rpc 0.2.0 **editable** 安装自 `engine/ghidra-rpc/`，pyghidra 3.1.0 + JPype1 1.5.2）——引擎代码改动即时生效
+  - legacy venv：`$HOME/Desktop/src/ghidra-bridge/pyghidra-venv`（Python 3.10，pyghidra 3.1.0）——仅供 `driver.py` 后路使用
+- 工作区：`~/.dsh/ghidra-workspace/`（`projects/` legacy 项目缓存、`projects-rpc/` daemon 项目、`out/` 产物、`logs/` 日志）
+- **传给 Ghidra 的路径必须走 junction `~/dsh-ghidra-workspace`**：Ghidra 的 `ProjectLocator` 拒绝任何以 `.` 开头的路径元素（`~/.dsh/...` 会 abort）。上游 ghidra-rpc 会 `resolve()` 掉 junction——已打补丁（`engine/VENDOR.md` 补丁 2），junction 路径全程可用
 
 ### 为什么不是 Jython / analyzeHeadless（重要：原设计其实没错）
 
@@ -41,12 +43,12 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 另外注意：**PyGhidra 启动器下 `analyzeHeadless` 完全不可用**——把 `.py` 交给它会得到 `Ghidra was not started with PyGhidra. Python is not available`。所以一旦选 PyGhidra，就必须整条链走 `driver.py`。
 
-上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个，**脚本目录现有 25 个任务脚本**（+ `driver.py` + `analysis_config.py`，共 27 个 `.py`），实测全部可用（移植期间修的三个问题见 §7）。
+上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个。**2026-09-15 起执行引擎迁移为 ghidra-rpc 常驻 daemon，这 25 个脚本冻结为 legacy 备查**（见 §5 第 3 层），`driver.py` 保留为 daemon 挂掉时的后路。
 
 ## 1. 六条铁律（先读这个再动手）
 
-1. **一次调用，批量做事**：每次启动 = JVM 冷启动 + 项目加载（10~60 秒）。禁止"一个函数一次调用"的交互式节奏——用 `triage_scan.py` / `decompile_all.py` 一把出，或写一个组合脚本一次完成 N 件事。
-2. **导入分析一次做足**：`driver.py import` 只做一次全量分析；之后一律 `driver.py exec`（PyGhidra 无 `-noanalysis` 概念，脚本阶段不会重跑分析）。
+1. **开工先 ensure；批量场景用批量工具**：daemon 温热后单次命令 ~0.2s，"一个函数一次调用"不再是罪。但全量反编译/全文搜索仍优先 `decompile-all` / `search-decompiled` 这类服务端批量工具——别 for 循环 1000 次单条 `decompile`（每条都要序列化过锁）。
+2. **导入分析一次做足**：`rpc_driver.py ensure` 的 load 只做一次全量分析；之后所有查询/写操作都打在同一个已分析程序上，不会重跑分析。
 3. **大输出落文件**：所有脚本约定首个参数 `@绝对路径` = 完整结果写该文件（JSON/文本），stdout 只留状态行。agent 用 Read 读文件，不要从 stdout 抠大输出。
 4. **Triage 硬门**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。
 5. **确认即标注**：搞清一个函数立即 `rename_symbol.py` 改成语义名 + `add_comment.py` 写 plate comment（地址/作用/依据）。结论必须带地址和可复现命令。写操作后需 `exec-w` 才会存盘。
@@ -55,40 +57,32 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 ## 2. 快速上手（3 行）
 
 ```bash
-PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
-SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
+RD="$HOME/.dsh/skills/ghidra-reverse/scripts/rpc_driver.py"
 
-# 1) 建可复用项目（走 Ghidra 自带 headless 导入器；PyGhidra 自己存不下来，见 §7「持久化限制」）
-"$PY" "$SK/driver.py" export /path/to/binary
+# 1) 开工：daemon 没起就起、二进制没 load 就 load（幂等），含全量分析
+python "$RD" ensure /path/to/binary
 
-# 2) 导入 + 全量分析 + 一键分诊 → out/<名>.triage.json（进程内，不落盘）
-"$PY" "$SK/driver.py" import /path/to/binary
+# 2) 一键分诊 → @out 落盘；之后所有命令直接跟二进制路径，key 自动映射
+python "$RD" "@$HOME/.dsh/ghidra-workspace/out/app.triage.json" triage /path/to/binary
+python "$RD" decompile /path/to/binary main
+python "$RD" xrefs-to /path/to/binary check_flag
 
-# 3) 批量导出函数伪码 → @out 指向的 .json 及其同名 .c
-"$PY" "$SK/driver.py" exec /path/to/binary decompile_all.py \
-    "@C:/Users/you/.dsh/ghidra-workspace/out/app.json"
-
-# 4) 写操作（重命名、注释、打补丁）要落盘时用 exec-w
-"$PY" "$SK/driver.py" exec-w /path/to/binary rename_symbol.py 0x401000 check_flag
+# 3) 写操作（重命名/注释/patch）即刻生效并自动存盘，无需 exec-w
+python "$RD" rename-function /path/to/binary FUN_00401000 check_flag
 ```
 
-子命令：`list` / `export [--force] [--overwrite] [--max-cpu N] [--analysis <超时秒>]` / `import [--force] [--analysis minimal|default]` / `exec` / `exec-w`（存盘）/ 全局 `-v`（verbose JVM 输出）。
-⚠ import 与 export 的 `--analysis` **撞名不同义**：import 的是分析器档位，export 的是单文件分析超时秒数。
-项目名按二进制 SHA-256 前 16 位固定为 `dsh_<hash>`，与二进制路径无关。
-
-需要 GUI 深挖（图形化 CFG、交互式分析）时用 `scripts/launch_gui.py` 拉起 Ghidra 并直接打开对应项目（见下「GUI」节）——headless 标注全部已保存。
+`rpc_driver.py` 做的事：项目映射（`~/dsh-ghidra-workspace/projects-rpc/dsh_<sha256前16>.gpr`，junction 路径）、binary key 自动替换（不用记 `/name-hash6` 后缀）、`--project` 注入、`@out` 落盘、环境变量自给（GHIDRA_INSTALL_DIR/JAVA_HOME/LOCALAPPDATA 重定向/USERNAME=dsh）。
+子命令：`ensure|status|stop <binary>` + 其余全部透传给 `ghidra-rpc` CLI（`decompile`/`functions`/`strings`/`disassemble`/`assemble`/`write-bytes`/`triage`/`exec-code`/`export-binary`/`emulate-function`/`version-track`…，全量见 `ghidra-rpc --help`）。
+二进制比对：`version-track <A> <B>` / `function-diff <A> <f1> <B> <f2>` 会自动把 B 也 load 进 A 的项目（VT 要求同项目）。
 
 ### 长任务（后台执行）
 
-driver.py 的一次调用 = JVM 冷启动 + 分析，大二进制可能跑几分钟到几十分钟。**一律用 dsh Bash 工具的 `run_in_background` 跑长任务**，靠 `@out` 落盘拿结果，不要前台干等：
+daemon 常驻后日常命令都是亚秒级，真正的长任务只剩 **`load`（大文件导入+分析）和 `version-track`（全函数关联）**——这类用 dsh Bash 工具的 `run_in_background` 跑，靠 `@out` 落盘拿结果：
 
 ```bash
-# 后台跑全量反编译（--limit 控制规模），结果落 @out 文件
-"$PY" "$SK/driver.py" exec /path/to/big.bin decompile_all.py \
-    "@$HOME/.dsh/ghidra-workspace/out/big.decompile.json"
-# → 拿到 task_id 后继续干别的；完成通知到达后：
-#    Read ~/.dsh/ghidra-workspace/out/big.decompile.json      （汇总 + failed 清单）
-#    Read ~/.dsh/ghidra-workspace/out/big.decompile.json.c    （全部伪码）
+# 后台跑 version-track（大样本对），结果落 @out 文件
+python "$RD" "@$HOME/.dsh/ghidra-workspace/out/vt.json" version-track old.exe new.exe --changed-only
+# → 拿到 task_id 后继续干别的；完成通知到达后 Read 该 json
 ```
 
 判断完成的信号是 `@out` 文件出现且 JSON 有效；stdout 摘要行只有几行，不要从前台输出抠大结果。
@@ -111,41 +105,43 @@ detached 启动，脚本立即返回 PID，GUI 输出进 `logs/gui-launch.log`�
 python "$SK/doctor.py"          # 全绿 exit 0；任一 fail exit 1
 ```
 
-检查：Ghidra 安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv 可 import 及版本、工作区可写 + junction 解析、现有项目清单。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
+检查（8 项）：Ghidra 安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv、ghidra-rpc-venv、ghidra-rpc 包（editable 自 engine/）、工作区可写 + junction 解析、现有项目清单、daemon 起停冒烟（可用 `--quick` 跳过最后这项慢的）。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
+
+**外来旧项目**：从别处拷来的项目若 `project.prp` 的 `OWNER` 不是 `dsh`，headless `open_project` 首次打开会自动改写属主；GUI 则要求属主一致，手动把 `OWNER VALUE="..."` 改成 `dsh` 即可。
 
 ## 3. 工作流（四阶段）
 
 ### 阶段 1 — Triage（5~15 分钟，强制起点）
-`driver.py import` 自动执行 `triage_scan.py`，产出：元数据、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python/UPX）。
+`rpc_driver.py ensure`（含分析）+ `rpc_driver.py triage` 一把出：元数据、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python/UPX）。输出形状与 legacy triage.json 一致。
 
 手工补充（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
 
 ### 阶段 2 — Recon（静态锚点）
-- `search_strings.py "@out" 4 "flag|correct"`：字符串 + 引用者 xref 反查
-- `get_symbols.py "@out" imports|exports|all`；`get_memory_map.py "@out"`
-- `list_functions.py "@out" [regex] [limit:N] [offset:N]`：分页列函数
-- 从可疑字符串/API 的 xref 反查调用者 → 锁定 `main` / check 函数
+- `strings <bin> "flag|correct"`：字符串过滤；`imports`/`exports`/`metadata`；`memory-map`
+- `functions <bin> --limit N --offset M [--address-min/--address-max]`：分页列函数
+- 从可疑字符串/API 的 `xrefs-to` 反查调用者 → 锁定 `main` / check 函数
 
 ### 阶段 3 — Analysis
-- `decompile_function.py "@out" <函数名|0x地址>`；**多个目标用逗号或空格一次传入**，一次 JVM 出全部结果（16 个函数从 16 次冷启动降到 1 次）：
-  `driver.py exec <bin> decompile_function.py "@out/multi.json" 0x101300,0x101bf0,0x1020a0`
-  输出多了 `functions[]` 与 `decompiled_count`；单目标时旧字段（`c_code`/`local_variables`）原样保留
-- `decompile_all.py "@out"`：真·全量；`--limit` 控制
-- `get_xrefs.py "@out" <目标> both` / `get_call_graph.py "@out" <函数> recursive 3` 追数据流
-- `search_bytes.py "@out" "48 8d ?? ??"`：字节模式搜索（支持 `??` 与半字节 `4?` 通配）
+- `decompile <bin> <函数|0x地址>`：函数伪码；多个目标就连发（daemon 热，~0.2s/条）
+- `decompile-all <bin> [--limit N]`：真·全量批量导出
+- `search-decompiled <bin> <regex>`：**跨函数正则搜伪码**（找常量/模式首选，比逐个 decompile 快得多）
+- `xrefs-to`/`xrefs-from <bin> <目标>` 追数据流；`basic-blocks` 拿 CFG
+- `find-bytes <bin> "48 8d ?? ??"`：字节模式搜索；`disassemble` 看汇编；`pcode [--high]` 看 P-code
 - 命中具体模式 → 查 `references/ctf-patterns.md`（已知明文 XOR、.rodata 期望值、比较函数即 oracle、自定义 VM 五步法、魔数表…）
 - 命中反调试/混淆 → 查 `references/anti-analysis.md`（识别清单、Check→Bypass 对照、OLLVM 分层）
-- 自定义解密 stub 不想脱壳 → EmulatorHelper 仿真模板见 `references/scripting.md` §仿真
-- 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `get_disassembly.py` 汇编
-- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `get_disassembly.py`（`offset` 翻页靠地址范围参数、`hasMore` 靠 `truncated` 字段、带 `bytes` 原始字节）
+- 自定义解密 stub 不想脱壳 → `emulate-function`（P-code 仿真，支持寄存器/内存预置）
+- 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `disassemble` 汇编
+- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `disassemble`（带原始字节）
 
 ### 阶段 4 — Annotate / Patch / 交付
-- 写操作落盘用 `exec-w`：`driver.py exec-w <bin> rename_symbol.py 0x401000 check_flag`
-  （`add_comment.py` 类型：eol/pre/post/plate/repeatable；`set_function_signature.py` 改原型）
-- `patch_bytes.py "@out" 0x401050 "74"`（JZ↔JNZ 类 patch）；导出 patched 二进制用 `export_binary.py "@out" <导出路径>`（headless 直接导出 Original File 格式，不用开 GUI；多 FileBytes 来源的固件镜像除外，见 §7）
+- 写操作即刻生效+自动存盘：`rename-function` / `rename-symbol` / `batch-rename`（批量一次事务）、`set-comment`（类型 eol/pre/post/plate/repeatable）/ `batch-set-comment`、`set-signature` 改原型
+- patch：`assemble <bin> 0x401050 "NOP"`（SLEIGH 汇编器，写字节+重建指令一步到位；**助记符建议大写**，小写会自动重试）或 `write-bytes`（原始写字节，自动清冲突指令+授写权限，结果报 `instructions_cleared`）；导出 patched 二进制用 `export-binary`（Original File 格式，返回 md5 与原文件对比；多 FileBytes 来源的固件镜像除外）
+- 二进制比对：`version-track`（Auto VT + BSim）找变化函数，`function-diff` 看具体差异，`match-function` 找对应函数
 - 交付纪律：报告含 范围 / 证据（地址+复现命令）/ 结论 / 产物路径+SHA256。未经证据支撑的否定结论（"无网络能力"）禁止出现。
 
-## 4. 裸命令模板（排障时才需要；日常用 `driver.py`）
+## 4. 裸命令模板（legacy 排障专用；日常用 `rpc_driver.py`）
+
+daemon 整体不可用时的后路是 `driver.py`（pyghidra-venv，每次调用一个冷启动 JVM）：
 
 ```bash
 PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
@@ -165,55 +161,54 @@ export JAVA_HOME="C:/Java"
 
 `analyzeHeadless.bat` 仍然可用，但**只能跑 `@runtime` 不是 PyGhidra 的脚本（即 `.java`）**；对 `.py` 会报 Jython 缺失。全部参数细节与 Windows 坑 → `references/headless.md`。
 
-## 5. 脚本清单（`scripts/`，PyGhidra，Ghidra 进程内运行）
+## 5. 能力清单（三层）
 
-通用约定：`[@out文件]` 恒为第一个参数；函数定位支持 `0x地址` / 精确名 / 模糊子串三级查找。
+通用约定：`rpc_driver.py` 的 `[@out文件]` 恒为第一个参数；函数定位支持 `0x地址` / 精确名 / 模糊子串；写操作即刻生效并自动存盘。
 
-| 脚本 | 用途 | 关键参数 |
-|---|---|---|
-| `triage_scan.py` | 一键分诊报告（本 skill 入口） | — |
-| `analyze_binary.py` | 程序元数据握手 | — |
-| `decompile_all.py` | 批量导出全函数伪码到 `.c` | `[regex] [超时秒] [--limit N]` |
-| `decompile_function.py` | 函数伪码 + 局部变量；**支持一次多个目标** | 函数[,函数…] |
-| `get_disassembly.py` | 反汇编（函数/地址范围） | 起点, [终点], [上限500] |
-| `list_functions.py` | 列函数（过滤+分页） | [regex], limit:N, offset:N |
-| `search_strings.py` | 字符串 + 引用者 | [最小长], [regex] |
-| `search_bytes.py` | 字节模式搜索（通配符） | pattern, [上限], [起], [止] |
-| `get_xrefs.py` | 交叉引用 to/from/both | 地址/函数, [方向] |
-| `get_call_graph.py` | caller/callee 树 | 函数, [recursive], [深度2] |
-| `get_basic_blocks.py` | 函数 CFG 基本块 | 函数 |
-| `get_memory_map.py` | 内存段/地址空间 | — |
-| `get_data_at_address.py` | 按类型读内存 | 地址, 长度/类型, [格式] |
-| `get_symbols.py` | 导入/导出/入口点 | imports/exports/all |
-| `list_classes.py` | C++ 类/vtable 启发式 | [过滤子串] |
-| `emulate_function.py` | P-code 仿真执行 | 函数, 寄存器JSON, 内存JSON, [步数] |
-| `rename_symbol.py` ✎ | 重命名 | 地址/旧名, 新名 |
-| `add_comment.py` ✎ | 加注释 | 地址, 文本, [类型] |
-| `set_function_signature.py` ✎ | 改函数签名 | 函数, 签名… |
-| `patch_bytes.py` ✎ | 写内存字节 | 地址, hex串 |
-| `set_analysis_options.py` | ⚠ 已被 `analysis_config.py` + `driver.py import --analysis` 取代（§7.9） | minimal |
-| `exec_code.py` ⚠ | **任意 Ghidra API**：exec 一个 Python 代码文件，预置 program/find_function/output_json 等 | [@out], 代码文件 |
-| `export_binary.py` | headless 导出 patched 二进制（Original File 格式） | [@out], 导出路径 |
-| `apply_c_types.py` ✎ | C 语法定义 struct/enum 进类型库（自动补 stdint typedef） | [@out], C声明文件 |
-| `apply_data_type.py` ✎ | 把类型套到地址上（createData） | [@out], 地址, 类型名 |
-| `launch_gui.py` ◈ | detached 拉起 Ghidra GUI，可直接打开项目 | [--open 二进制] [--project 名] |
-| `doctor.py` ◈ | 环境自检（安装/JDK/venv/工作区/项目），全绿 exit 0 | [@out] |
+### 第 1 层：rpc 命令（主力，`python rpc_driver.py <命令> <binary> [参数]`）
 
-✎ = 写操作：用 `exec-w` 才会保存。◈ = 宿主机工具脚本：直接用 venv/系统 python 运行（`python scripts/xxx.py`），不经 `driver.py exec`。⚠ `exec_code.py` 是无沙箱任意代码执行——开放整个 Ghidra API 的逃生舱，清单内脚本不够用时就写个代码文件喂给它，别为此新建一次性脚本。写自定义脚本看 `references/scripting.md`。
+| 命令 | 用途 |
+|---|---|
+| `ensure` / `status` / `stop` | daemon 与二进制生命周期（ensure 幂等） |
+| `triage` ◆ | 一键分诊报告（本 skill 入口） |
+| `metadata` / `imports` / `exports` / `memory-map` / `relocations` | 程序元数据 |
+| `functions` / `decompile` / `decompile-all` / `search-decompiled` | 函数与伪码 |
+| `disassemble` / `assemble` ✎ / `basic-blocks` / `pcode` | 汇编/CFG/P-code |
+| `strings` / `symbols` / `find-bytes` | 搜索 |
+| `xrefs-to` / `xrefs-from` | 交叉引用 |
+| `read-bytes` / `read-pointers` / `write-bytes` ✎ | 内存读写（write-bytes 已对齐 patch_bytes 语义） |
+| `rename-function` ✎ / `rename-symbol` ✎ / `batch-rename` ✎ / `set-comment` ✎ / `batch-set-comment` ✎ / `set-signature` ✎ | 标注 |
+| `create-struct` ✎ / `create-enum` ✎ / `modify-struct` ✎ / `set-data-type` ✎ / `apply-data-type-range` ✎ / `set-equate` ✎ | 数据类型 |
+| `retype-variable` ✎ / `rename-variable` ✎ / `batch-edit-variables` ✎ / `set-calling-convention` ✎ / `set-thunk` ✎ / `create-function` ✎ / `create-label` ✎ | 深度修改 |
+| `version-track` / `function-diff` / `match-function` | 二进制比对（Auto VT + BSim） |
+| `list-vtable` / `get-processor-context` / `set-processor-context` ✎ | C++/ISA 上下文 |
+| `tag-function` ✎ / `list-tags` / `functions-by-tag` / `set-bookmark` ✎ / `list-bookmarks` | 进度标记 |
+| `exec-code` ◆⚠ | 逃生舱：daemon 内 exec Python 文件（预置 program/find_function/output_json；无沙箱） |
+| `export-binary` ◆ | Original File 导出 + md5 对比 |
+| `emulate-function` ◆ | EmulatorHelper P-code 仿真（寄存器/内存预置，call-depth 追踪） |
 
-**类型库两步走必须都用 `exec-w`**（实测踩过）：`apply_c_types.py` 在只读运行里能成功解析并返回 `types_added`（如 `["/aegis_hdr","/aegis_op", …]`），**但类型不会落盘**，下一次 `apply_data_type.py` 立刻报
-`{"status":"error","error":"Data type not found: aegis_hdr"}`。正确顺序：
+◆ = dsh 自定义工具（`engine/ghidra-rpc/ghidra_rpc/server/tools/dsh_tools.py`）。✎ = 写操作。⚠ = 无沙箱。
+完整命令与参数：`~/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts/ghidra-rpc.exe --help`，或 `engine/ghidra-rpc/docs/` + `engine/ghidra-rpc/README.md`。
 
-```bash
-driver.py exec-w <bin> apply_c_types.py  "@out/types.json" mytypes.h   # 定义并保存
-driver.py exec-w <bin> apply_data_type.py "@out/applied.json" 0x101300 aegis_hdr
-```
-不想落盘就两步合并进一个 `exec_code.py` 代码文件，一次运行内完成定义+套用。
+### 第 2 层：宿主工具脚本（◈ 直接 python 运行，不经 daemon/driver）
 
-### 执行模型（两条路，driver 自动分流）
-- **`.py`（PyGhidra 脚本）** → 走 `pyghidra.ghidra_script()`。要用**绝对路径**给 `-scriptPath` 之外的脚本；脚本名解析顺序是 skill 目录 → 当前目录 → `<ws>/scripts`
-- **`.java`（GhidraScript）** → 自动改走 `analyzeHeadless -scriptPath <脚本目录> -process <程序> -noanalysis -postScript <脚本> <参数…>`。原因是 PyGhidra 跑不了注册目录之外的 `.java`：`JavaScriptProvider` 直接抛 `Failed to find source bundle containing script`
-- `analyzeHeadless` 的参数走 **Java property parser**：路径必须用**正斜杠**，反斜杠会被当转义 → `Bad argument: C:\Users\...`（项目目录也一样）
+| 脚本 | 用途 |
+|---|---|
+| `rpc_driver.py` | 统一入口：项目映射/key 替换/@out/环境自给 |
+| `launch_gui.py` | detached 拉起 Ghidra GUI，可直接打开项目 |
+| `doctor.py` | 环境自检（8 项：安装/JDK/双 venv/工作区/项目/rpc 包/daemon 起停），全绿 exit 0 |
+
+### 第 3 层：legacy（冻结备查，被 rpc 取代）
+
+`scripts/` 下 25 个 PyGhidra 脚本 + `driver.py` + `analysis_config.py`：**冻结，仅备查**。`driver.py` 仍是两条后路——(a) daemon 整体挂掉时的直接执行通道（`driver.py export/exec/exec-w`，用 pyghidra-venv）；(b) 调试脚本行为差异时的对照组。不要在新工作流里再用它们；行为差异以 rpc 为准。
+
+✎ 注意：legacy 时代"写操作必须 exec-w 才存盘"的纪律**已由 daemon 的自动存盘取代**——rpc 写命令每次写完即 `project.save()`，`stop` 时再全量保存。
+
+### 执行模型（engine 内部，排障时读）
+- daemon 进程 = rpc-venv 的 python + 进程内 JVM（pyghidra）；transport = 127.0.0.1 TCP + token（endpoint 文件在 `<ws>/rpc-localappdata/ghidra-rpc/`）
+- session/registry 在 `<ws>/rpc-state/`（`GHIDRA_RPC_STATE_DIR`）；daemon 日志在 `<ws>/rpc-localappdata/ghidra-rpc/*.log`
+- 所有 handler 由全局锁串行化——**并发客户端不会并行执行**，长命令会挡住其他命令
+- daemon 崩溃后下一条命令自动按 session 重启（auto-restart）；`stop` 不干净时删 endpoint 文件再起
 
 ## 6. 语言/平台路由（识别到就换打法，别硬上通用流程）
 
@@ -288,14 +283,18 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 | 能力 | 状态 |
 |---|---|
 | 动态调试（Ghidra Debugger/TraceRmi） | **不做**。动态分析外包给 Frida/GDB/Qiling/angr，选型见 `references/ctf-patterns.md` §6 |
-| 二进制比对 / Version Tracking | **用 ghidriff**（基于 Ghidra headless 的现成 diff 工具）：`pip install ghidriff` 后 `ghidriff old.exe new.exe -o out/ --json-format`，输出 Markdown/JSON/GhidraProject；大文件加 `--max-section-funcs-analyze 8000 --threaded` 防 OOM。详见 `references/headless.md` §8 |
-| Function ID / FIDB | 分析器本身由 `driver.py import --analysis default` 开启（minimal 档会关掉）；FIDB 签名库的制作是低频 GUI 操作（File → Batch Import 到 FIDB），不在本 skill 范围 |
-| 数据类型深度操作 | `apply_c_types.py` + `apply_data_type.py` 覆盖 struct/enum 定义与套用；type archive 管理走 GUI |
+| 二进制比对 / Version Tracking | **内置**：`version-track`（Auto VT + BSim）/ `function-diff` / `match-function`。⚠ 灵敏度坑：单字节 patch 级别的差异在默认相似度下会被判 `identical`（`changed_functions: 0`）——找小改动要去掉 `--changed-only` 看 similarity 分数，或调高 `--min-similarity`；确认差异用 `function-diff` |
+| 汇编级 patch | **内置**：`assemble`（SLEIGH，助记符大小写敏感，小写自动重试一次）/ `write-bytes`（自动清冲突指令+授写权限） |
+| 伪码全文搜索 | **内置**：`search-decompiled`（跨函数正则） |
+| P-code 分析 | **内置**：`pcode`（raw listing）/ `pcode --high`（SSA） |
+| 批量变量改名/改型 | **内置**：`batch-edit-variables`（同一反编译快照上一次事务改多个局部变量） |
+| Function ID / FIDB | 分析器由 daemon 的 `load` 全量分析自带；FIDB 签名库的制作是低频 GUI 操作（File → Batch Import 到 FIDB），不在本 skill 范围 |
+| 数据类型深度操作 | `create-struct`/`create-enum`/`modify-struct`/`set-data-type`/`apply-data-type-range` 覆盖定义与套用；type archive 管理走 GUI |
 | 协作式项目（shared repository） | **不做**。Ghidra Server 运维范畴，与单机 agent 场景无关 |
-| 导出 patched 二进制 | `export_binary.py`（多 FileBytes 的固件镜像未测，可能按目录导出） |
-| 分析器选项调优 | `driver.py import --analysis minimal|default`（`analysis_config.py`）；旧 `set_analysis_options.py` 在 PyGhidra 流程无钩子可挂，仅作参考 |
-| 清单外 API 调用 | `exec_code.py` 逃生舱 |
-| `@out`/导出/输入文件路径无白名单 | **已接受风险**（本地单机威胁模型）。`exec_code.py` 是无沙箱 exec、`@out` 可写任意路径——不要把本 skill 暴露给不可信调用方 |
+| 导出 patched 二进制 | `export-binary`（多 FileBytes 的固件镜像未测，可能按目录导出） |
+| 分析器选项调优 | daemon `load` 固定全量分析；需要 minimal 档时用 legacy `driver.py import --analysis` 或改 `analysis_config.py` |
+| 清单外 API 调用 | `exec-code` 逃生舱 |
+| `@out`/导出/输入文件路径无白名单 | **已接受风险**（本地单机威胁模型）。`exec-code` 是无沙箱 exec、`@out` 可写任意路径——不要把本 skill 暴露给不可信调用方 |
 
 ## 9. References（按需加载，别一次全读）
 
