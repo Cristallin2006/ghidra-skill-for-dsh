@@ -6,7 +6,7 @@ whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面
 
 # RE Triage（场景 1：这是什么？）
 
-前置：无（本 skill 是逆向工作流入口）／后继：判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`
+前置：无（本 skill 是逆向工作流入口）／后继：检出壳 → `~/.dsh/skills/re-unpack`；判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`
 
 > **铁律 4（Triage 硬门）**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。（全文见 ghidra-core §1）
 
@@ -41,6 +41,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 
 - ③ 读懂逻辑/提取算法 → `ghidra-static`（Recon→Analysis→标注/patch，命令见 ghidra-core）
 - ③ 找漏洞 → `vuln-audit`（按 checklist 逐项排查，命中项回 ghidra-static 深挖确认）
+- 检出壳 → `re-unpack`（脱壳+验证）→ 脱壳产物回 ① 重新分诊
 - ④ 交付纪律（证据带地址+复现命令、产物 SHA256、禁止无证据否定结论）在 `ghidra-static` §交付
 - 任何阶段的命令细节 → `ghidra-core`；静态 15 分钟无关键路径 / 同一路径失败 2 次 → 转动态或换工具（铁律 6，全文见 ghidra-core §1）
 
@@ -50,7 +51,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 |---|---|
 | 普通 native 二进制，要读懂/提取逻辑 | → **ghidra-static**（静态深挖） |
 | 目的是找漏洞/攻击面 | → **vuln-audit**（按清单排查） |
-| 有壳（UPX 节名/高熵/导入表异常干净） | 先脱壳（`upx -d` 或断 unpack stub dump），再回本分诊 |
+| 有壳（UPX 节名/高熵/导入表异常干净） | → **re-unpack**（检出壳 = 唯一的下一步；脱壳产物回本表重新分诊）。**检出壳后 MUST NOT 对 packed 字节做任何内容分析（肉眼或脚本）——那是噪声** |
 | .NET（mscoree/_CorExeMain） | **离开 Ghidra**：dnSpyEx + de4dot（例外：NativeAOT/IL2CPP 是 native，留下） |
 | PyInstaller/Pyarmor | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc |
 | 静态 15 分钟无关键路径 | 转动态（Frida/GDB/Qiling/angr，选型见 ghidra-static 的 references/ctf-patterns.md §6） |
@@ -64,8 +65,8 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数 |
 | `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
-| UPX 节名 | `upx -d`；失败说明元数据被篡改，按 UPX 源码手工修头再解 |
-| 自定义壳 / 熵高 | 断 unpack stub 后 dump，或不脱壳用 `emulate-function` 仿真解密（命令见 ghidra-core §5） |
+| UPX 节名 | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
+| 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
 | APK 里的 .so | 优先选 x86_64 版本，Ghidra 反编译质量最好；JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
 | WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
 | PE DOS stub 异常大 | 查 DOS stub 藏代码（`int 16h`），Windows 题常见 |

@@ -8,8 +8,8 @@ whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障�
 
 唯一的代码与命令知识层。场景 skill（re-triage / ghidra-static / vuln-audit）只含方法论，具体命令一律回本文件查。
 
-- 场景路由：未知样本分诊 → `~/.dsh/skills/re-triage`；静态深挖/patch/交付 → `~/.dsh/skills/ghidra-static`；漏洞模式排查 → `~/.dsh/skills/vuln-audit`
-- 本 skill 内容：§0 环境 / §1 六条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
+- 场景路由：未知样本分诊 → `~/.dsh/skills/re-triage`；脱壳与验证 → `~/.dsh/skills/re-unpack`；静态深挖/patch/交付 → `~/.dsh/skills/ghidra-static`；漏洞模式排查 → `~/.dsh/skills/vuln-audit`
+- 本 skill 内容：§0 环境 / §1 七条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
 - engine 内部补丁细节不在本文件：见 `engine/VENDOR.md`
 
 ## 0. 环境（本机已配好）
@@ -46,14 +46,17 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个。**2026-09-15 起执行引擎迁移为 ghidra-rpc 常驻 daemon，这 25 个脚本冻结为 legacy 备查**（见 §5 第 3 层），`driver.py` 保留为 daemon 挂掉时的后路。
 
-## 1. 六条铁律（先读这个再动手）
+## 1. 七条铁律（先读这个再动手）
 
 1. **开工先 ensure；批量场景用批量工具**：daemon 温热后单次命令 ~0.2s，"一个函数一次调用"不再是罪。但全量反编译/全文搜索仍优先 `decompile-all` / `search-decompiled` 这类服务端批量工具——别 for 循环 1000 次单条 `decompile`（每条都要序列化过锁）。
 2. **导入分析一次做足**：`rpc_driver.py ensure` 的 load 只做一次全量分析；之后所有查询/写操作都打在同一个已分析程序上，不会重跑分析。
 3. **大输出落文件**：所有脚本约定首个参数 `@绝对路径` = 完整结果写该文件（JSON/文本），stdout 只留状态行。agent 用 Read 读文件，不要从 stdout 抠大输出。
 4. **Triage 硬门**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。
-5. **确认即标注**：搞清一个函数立即 `rename_symbol.py` 改成语义名 + `add_comment.py` 写 plate comment（地址/作用/依据）。结论必须带地址和可复现命令。写操作后需 `exec-w` 才会存盘。
-6. **时间盒**：静态深挖 ~15 分钟无关键路径 → 转动态（Frida/GDB/Qiling/angr，选型见 `references/ctf-patterns.md`）；同一路径失败 2 次 → 换工具，禁止空转。
+5. **确认即标注**：搞清一个函数立即 `rename-function` 改成语义名 + `set-comment --type plate` 写 plate comment（地址/作用/依据）。结论必须带地址和可复现命令。daemon 写操作即刻生效并自动存盘。
+6. **时间盒**：静态深挖 ~15 分钟无关键路径 → 转动态（Frida/GDB/Qiling/angr，选型见 ghidra-static `references/ctf-patterns.md` §6）；同一路径失败 2 次 → 换工具，禁止空转。
+7. **死循环断路器**：循环签名 = 第二次回到同一字节区域/同一假设继续分析。一旦命中立即停手，显式声明卡点（"我在 X 上卡住，已试 A、B"），然后升级：换工具 / 转动态 / 问用户——禁止第三种方式重试同一路径。字节只能通过工具解读（反汇编、反编译、脚本输出）；肉眼直读 hex 仅用于验证工具输出，预算 ≤2 次。packed/加密字节在信息论上是噪声，内容级死磕一律禁止——先脱壳（re-unpack）或仿真（`emulate-function`）。
+
+铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（原地打转立即停手）——先命中哪条执行哪条。
 
 ## 2. 快速上手（3 行）
 

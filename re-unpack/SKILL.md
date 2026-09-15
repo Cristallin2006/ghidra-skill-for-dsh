@@ -1,0 +1,75 @@
+---
+name: re-unpack
+description: 对已确认或疑似加壳的二进制执行脱壳与验证：UPX/ASPack/Themida/VMProtect/MPRESS，PE/ELF，多层。触发：triage 检出壳、熵高、节名 UPX/.aspack/.vmp、导入表异常干净。只做脱壳与脱壳成功验证——脱完回 re-triage 重新分诊，不做内容分析。
+whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导入表只剩 LoadLibrary/GetProcAddress）、需要脱壳或验证脱壳产物时；多层壳、IAT 重建、脱壳失败换后路
+---
+
+# RE Unpack（场景：脱壳与验证）
+
+前置：re-triage（检出壳才来这里）／后继：回到 re-triage（脱壳产物当新样本重新分诊）／内容分析 → ghidra-static／命令细节 → ghidra-core
+
+> **断路器纪律**：packed/加密字节在信息论上是噪声——禁止对其做内容级肉眼/脚本分析；同一区域第二次回访 = 触发断路器（见 ghidra-core 铁律 7）。
+
+## 路径约定
+
+```bash
+UPX="$HOME/Desktop/src/tools/upx/upx.exe"                     # Tier 1 原生 UPX
+UNP="$HOME/Desktop/src/unpacker-venv/Scripts"                 # Unpacker venv（Python 3.12, editable）
+export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PATH 找原生 upx
+```
+
+本 skill 零 Ghidra 知识；脱壳产物进 Ghidra 的后续动作全部走 re-triage/ghidra-core。
+
+## 流程
+
+### 1. detect + unpack（一条命令）
+
+```bash
+"$UNP/unpacker.exe" <sample> -o <outdir> --max-layers 5 --timeout 300
+```
+
+输出逐层报告：`Detected: <packer> (confidence=…)` + 每层 `packer=… -> ok|fail` + `Final output: <路径>`。多层壳自动逐层剥（max 5），IAT 重建默认开。
+
+### 2. 选型表（壳 → 工具 tier）
+
+| 壳 | 特征 | 工具 |
+|---|---|---|
+| UPX | 节名 UPX0/UPX1、`UPX!` 魔数 | **Tier 1**：Unpacker 自动调原生 `upx -d`；或直接 `"$UPX" -d <sample> -o <out>` |
+| ASPack / Themida (PE32) | `.aspack`/`.themida` 节 | Tier 2：unipacker（**未装**，见下安装指令） |
+| VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier 2：qiling + rootfs（**未装**，见下） |
+| MPRESS | `.MPRESS1/2` 节 | Tier 2：unipacker |
+| 未知/自定义壳 | 熵高、节名正常但 IAT 干净 | 失败阶梯 ③④ |
+
+### 3. 验证（强制，不验证 = 没脱开）
+
+对脱壳产物逐项核对并**记录数字**：
+
+1. **熵降**：packed 应 >7，unpacked 应回到 5~6（脚本：字节 Shannon 熵）
+2. **大小变化**：unpacked 明显大于 packed
+3. **明文出现**：ASCII 字符串数显著增多；`KERNEL32.DLL` 等 DLL 名 + 真实 API 名出现在 imports
+4. **回链验证**：`python "$SK/rpc_driver.py" ensure <unpacked>` + `triage` 能正常分诊（SK 见 ghidra-core 路径约定）
+
+**验证不过 = 没脱开** → 进入失败阶梯。禁止拿未验证的产物往下走。
+
+## 失败阶梯（逐级时间盒，单级 ≤15 分钟）
+
+① **UPX 元数据篡改**（`upx -d` 报 not packed/header corrupted）→ 按 UPX 源码手工修 `UPX!` 魔数/`l_info`/`p_info` 头再 `upx -d`（细节见 `references/unpack-playbook.md` §UPX 修头）
+② **unipacker / qiling 仿真脱壳**——未装时**明确声明"此层不可用"**，不要硬试。安装指令：
+   - unipacker：`"$UNP/python.exe" -m pip install "C:/path/to/unpacker-src[unipacker]"`（Python 3.12 需 setuptools<81，extra 已钉）
+   - qiling：`pip install "…[emulation]"` + 准备 rootfs（`~/Desktop/src/qiling-rootfs`）
+③ **Ghidra 仿真解密 stub**：`emulate-function` 跑 unpack stub 后 dump（命令与用法 → ghidra-core §5；不在这里展开）
+④ **Frida 动态 dump**：跑起来后从内存抓 OEP 镜像（工具选型 → ghidra-static `references/ctf-patterns.md` §6）
+⑤ **全部失败** → 显式声明"未脱壳"，交付 stub 级分析（stub 功能、IAT 线索、入口行为）并**明示置信度**
+
+## 防死循环专节
+
+- 死循环签名：「肉眼分析 packed 字节 → 出错 → 写脚本分析 → 又回到肉眼分析」。packed 字节是噪声，任何内容级分析（肉眼或脚本）都不可收敛
+- **第二次回到同一字节区域/同一假设 = 立即停手**，按当前所在层级升级失败阶梯，或问用户
+- 肉眼直读 hex 仅用于**验证工具输出**（如确认 UPX 头被篡改），预算 ≤2 次
+- 每个工具调用前先在脑子里写下"这一步的产出应该长什么样"；产出不符立即换层级，不原地重试
+
+## References
+
+| 文件 | 何时读 |
+|---|---|
+| `references/unpack-playbook.md` | 多层脱壳、IAT 重建、UPX 修头、各壳特征与对策的细节 |
