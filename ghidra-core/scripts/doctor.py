@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Environment self-check for the ghidra-reverse skill (replaces the old
+"""Environment self-check for the ghidra-core skill (replaces the old
 plugin's ghidra_status/ghidra_capabilities).
 
 Host-side tool (run with any Python 3, NOT through driver.py exec):

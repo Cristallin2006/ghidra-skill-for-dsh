@@ -1,4 +1,4 @@
-"""PyGhidra driver for the ghidra-reverse skill.
+"""PyGhidra driver for the ghidra-core skill.
 
 Replaces the analyzeHeadless-based `run-headless.sh` invocation model. PyGhidra
 scripts cannot run under `analyzeHeadless.bat` at all -- that launcher starts a
@@ -430,7 +430,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
             stdout, stderr = run_script(script, project, program, args.script_args)
             outer.write_text((stdout or "") + "\n--- stderr ---\n" + (stderr or ""), encoding="utf-8")
             if args.write:
-                program.save("ghidra-reverse script", None)
+                program.save("ghidra-core script", None)
                 print("exec: project saved")
     print(f"exec: done (log {outer})")
     return 0
@@ -459,7 +459,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ghidra-reverse driver", description=__doc__)
+    parser = argparse.ArgumentParser(prog="ghidra-core driver", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose JVM output")
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -10,7 +10,7 @@ NtSetInformationThread  rdtsc  cpuid  GetTickCount  QueryPerformanceCounter
 /proc/self  SIGTRAP  alarm  OutputDebugString  FindWindow(调试器窗口名)
 ```
 
-`triage_scan.py` 的 `suspicious_imports.anti_debug` 已覆盖 Windows 侧主项。
+`triage` 命令（ghidra-core §5）的 `suspicious_imports.anti_debug` 已覆盖 Windows 侧主项。
 
 ## 2. Check → Bypass 对照表
 

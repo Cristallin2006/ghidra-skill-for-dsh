@@ -1,0 +1,72 @@
+---
+name: re-triage
+description: 未知二进制的第一步：判文件类型、语言、壳、威胁面，决定后续路线（静态深挖/动态/换工具）。触发：新样本、未知 exe/elf/bin/固件、"看看这个文件"、疑似加壳、恶意样本分诊。只做判断和路线决策，不做深挖——要深挖去 ghidra-static。
+whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面、接下来怎么打"时；新样本、疑似加壳、恶意软件初筛、CTF 题目开题
+---
+
+# RE Triage（场景 1：这是什么？）
+
+前置：无（本 skill 是逆向工作流入口）／后继：判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`
+
+> **铁律 4（Triage 硬门）**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。（全文见 ghidra-core §1）
+
+## 路径约定
+
+```bash
+SK="$HOME/.dsh/skills/ghidra-core/scripts"     # 唯一代码家
+RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
+```
+
+## 流程（5~15 分钟，强制起点）
+
+1. **ensure + triage 一把出**（daemon 没起就起、样本没 load 就 load，含全量分析）：
+
+```bash
+python "$SK/rpc_driver.py" ensure /path/to/sample
+python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json" triage /path/to/sample
+```
+
+产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python/UPX）。参数细节见 ghidra-core §5 能力清单。
+
+2. **手工补充**（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
+3. **下判据 → 选路线**（见下「语言/平台路由」与「路线决策」）。
+
+## 路线决策（判完型之后去哪）
+
+| 判定 | 下一步 |
+|---|---|
+| 普通 native 二进制，要读懂/提取逻辑 | → **ghidra-static**（静态深挖） |
+| 目的是找漏洞/攻击面 | → **vuln-audit**（按清单排查） |
+| 有壳（UPX 节名/高熵/导入表异常干净） | 先脱壳（`upx -d` 或断 unpack stub dump），再回本分诊 |
+| .NET（mscoree/_CorExeMain） | **离开 Ghidra**：dnSpyEx + de4dot（例外：NativeAOT/IL2CPP 是 native，留下） |
+| PyInstaller/Pyarmor | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc |
+| 静态 15 分钟无关键路径 | 转动态（Frida/GDB/Qiling/angr，选型见 ghidra-static 的 references/ctf-patterns.md §6） |
+| 同一路径失败 2 次 | 换工具，禁止空转 |
+
+## 语言/平台路由（识别到就换打法，别硬上通用流程）
+
+| 识别特征（triage 自动报） | 走向 |
+|---|---|
+| `go.buildid` / `runtime.gopanic` / 巨大静态二进制 | 先跑 GoReSym 恢复符号（stripped 也行）→ 只看 `main.*` 包函数；Go string 是 {ptr,len} 非 NUL 结尾，Ghidra 默认字符串分析会漏，装 golang-loader 插件或靠 xref |
+| `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数 |
+| `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
+| PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
+| UPX 节名 | `upx -d`；失败说明元数据被篡改，按 UPX 源码手工修头再解 |
+| 自定义壳 / 熵高 | 断 unpack stub 后 dump，或不脱壳用 `emulate-function` 仿真解密（命令见 ghidra-core §5） |
+| APK 里的 .so | 优先选 x86_64 版本，Ghidra 反编译质量最好；JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
+| WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
+| PE DOS stub 异常大 | 查 DOS stub 藏代码（`int 16h`），Windows 题常见 |
+
+## 分诊判据细则
+
+- **干净 IAT 警告**（`clean_iat_warning: true`）：导入只来自 kernel32/ntdll 且 < 15 个 → 动态加载嫌疑，**禁止**据此宣称"无网络/无文件能力"；去 `strings` 找 DLL/API 名字符串、`search-decompiled "LoadLibrary"` 查证据
+- **可疑 API 六组**：命中不等于恶意（where.exe 也命中 GetTickCount），看**组合**：injection 组 ≥2 个 + network 组 ≥1 个才是攻击面信号；单组单命中降级为备注
+- **字符串快赢为空**：可能是宽字符（`strings -el`）、资源段字符串或自定义加密——triage 只扫已定义 ASCII 字符串
+- 细节与平台速查：`references/triage.md`；命中反调试/反混淆：`references/anti-analysis.md`（识别清单、Check→Bypass 对照、OLLVM 分层）
+
+## References
+
+| 文件 | 何时读 |
+|---|---|
+| `references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查 |
+| `references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表 |

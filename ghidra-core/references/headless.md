@@ -8,7 +8,7 @@
 
 ```bash
 PY="$HOME/Desktop/src/ghidra-bridge/pyghidra-venv/Scripts/python.exe"
-SK="$HOME/.dsh/skills/ghidra-reverse/scripts"
+SK="$HOME/.dsh/skills/ghidra-core/scripts"
 
 "$PY" "$SK/driver.py" export <binary> [--force] [--overwrite] [--max-cpu N] [--analysis <超时秒>]  # 建可复用项目（analyzeHeadless -import，一次性）
 "$PY" "$SK/driver.py" import <binary> [--force] [--analysis minimal|default]  # 进程内导入+分析+triage（不落盘）

@@ -1,15 +1,16 @@
 ---
-name: ghidra-reverse
-description: 用 Ghidra 12.x headless 自动化做二进制逆向 —— CTF 逆向题、crackme、恶意样本分诊、固件分析。触发场景：逆向/反编译/反汇编/二进制分析/脱壳后分析/patch 二进制/批量分析/无 IDA 可用。覆盖 PE/ELF/Mach-O/raw 固件。
-whenToUse: 收到未知二进制需要分诊、反编译、提取算法、批量 headless 分析或 patch 时；用户提到 Ghidra、逆向、crackme、CTF reverse 时
+name: ghidra-core
+description: Ghidra headless 执行底座——rpc_driver/ghidra-rpc 命令、脚本清单、环境自检、engine 说明。当需要实际运行任何 Ghidra 命令、环境排障、或其他逆向 skill 里的操作不知道具体命令时加载。不含分析方法论。
+whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障、环境自检（doctor）、拉起 Ghidra GUI 时；re-triage/ghidra-static/vuln-audit 里的操作步骤缺少具体命令时
 ---
 
-# Ghidra Reverse（dsh 版）
+# Ghidra Core（执行底座）
 
-融合自三个来源，取长补短适配 dsh + Windows：
-- `zhaoxuya520/reverse-skill`：阶段门闩方法论、证据纪律、Windows 工具链实战坑
-- `wgpsec/AboutSecurity ctf-reverse`：CTF 知识库（语言识别、反分析、模式库）
-- `und3rf10w/ai-ghidra-tools`：19 个 headless 脚本与调用模型（已移植 PyGhidra 并修 Windows/12.x 兼容性）；本 skill 另新增 6 个：`triage_scan`/`decompile_all`/`exec_code`/`export_binary`/`apply_c_types`/`apply_data_type`
+唯一的代码与命令知识层。场景 skill（re-triage / ghidra-static / vuln-audit）只含方法论，具体命令一律回本文件查。
+
+- 场景路由：未知样本分诊 → `~/.dsh/skills/re-triage`；静态深挖/patch/交付 → `~/.dsh/skills/ghidra-static`；漏洞模式排查 → `~/.dsh/skills/vuln-audit`
+- 本 skill 内容：§0 环境 / §1 六条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
+- engine 内部补丁细节不在本文件：见 `engine/VENDOR.md`
 
 ## 0. 环境（本机已配好）
 
@@ -57,7 +58,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 ## 2. 快速上手（3 行）
 
 ```bash
-RD="$HOME/.dsh/skills/ghidra-reverse/scripts/rpc_driver.py"
+RD="$HOME/.dsh/skills/ghidra-core/scripts/rpc_driver.py"
 
 # 1) 开工：daemon 没起就起、二进制没 load 就 load（幂等），含全量分析
 python "$RD" ensure /path/to/binary
@@ -108,36 +109,6 @@ python "$SK/doctor.py"          # 全绿 exit 0；任一 fail exit 1
 检查（8 项）：Ghidra 安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv、ghidra-rpc-venv、ghidra-rpc 包（editable 自 engine/）、工作区可写 + junction 解析、现有项目清单、daemon 起停冒烟（可用 `--quick` 跳过最后这项慢的）。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
 
 **外来旧项目**：从别处拷来的项目若 `project.prp` 的 `OWNER` 不是 `dsh`，headless `open_project` 首次打开会自动改写属主；GUI 则要求属主一致，手动把 `OWNER VALUE="..."` 改成 `dsh` 即可。
-
-## 3. 工作流（四阶段）
-
-### 阶段 1 — Triage（5~15 分钟，强制起点）
-`rpc_driver.py ensure`（含分析）+ `rpc_driver.py triage` 一把出：元数据、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python/UPX）。输出形状与 legacy triage.json 一致。
-
-手工补充（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
-
-### 阶段 2 — Recon（静态锚点）
-- `strings <bin> "flag|correct"`：字符串过滤；`imports`/`exports`/`metadata`；`memory-map`
-- `functions <bin> --limit N --offset M [--address-min/--address-max]`：分页列函数
-- 从可疑字符串/API 的 `xrefs-to` 反查调用者 → 锁定 `main` / check 函数
-
-### 阶段 3 — Analysis
-- `decompile <bin> <函数|0x地址>`：函数伪码；多个目标就连发（daemon 热，~0.2s/条）
-- `decompile-all <bin> [--limit N]`：真·全量批量导出
-- `search-decompiled <bin> <regex>`：**跨函数正则搜伪码**（找常量/模式首选，比逐个 decompile 快得多）
-- `xrefs-to`/`xrefs-from <bin> <目标>` 追数据流；`basic-blocks` 拿 CFG
-- `find-bytes <bin> "48 8d ?? ??"`：字节模式搜索；`disassemble` 看汇编；`pcode [--high]` 看 P-code
-- 命中具体模式 → 查 `references/ctf-patterns.md`（已知明文 XOR、.rodata 期望值、比较函数即 oracle、自定义 VM 五步法、魔数表…）
-- 命中反调试/混淆 → 查 `references/anti-analysis.md`（识别清单、Check→Bypass 对照、OLLVM 分层）
-- 自定义解密 stub 不想脱壳 → `emulate-function`（P-code 仿真，支持寄存器/内存预置）
-- 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `disassemble` 汇编
-- **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序。要精确对齐时用 `disassemble`（带原始字节）
-
-### 阶段 4 — Annotate / Patch / 交付
-- 写操作即刻生效+自动存盘：`rename-function` / `rename-symbol` / `batch-rename`（批量一次事务）、`set-comment`（类型 eol/pre/post/plate/repeatable）/ `batch-set-comment`、`set-signature` 改原型
-- patch：`assemble <bin> 0x401050 "NOP"`（SLEIGH 汇编器，写字节+重建指令一步到位；**助记符建议大写**，小写会自动重试）或 `write-bytes`（原始写字节，自动清冲突指令+授写权限，结果报 `instructions_cleared`）；导出 patched 二进制用 `export-binary`（Original File 格式，返回 md5 与原文件对比；多 FileBytes 来源的固件镜像除外）
-- 二进制比对：`version-track`（Auto VT + BSim）找变化函数，`function-diff` 看具体差异，`match-function` 找对应函数
-- 交付纪律：报告含 范围 / 证据（地址+复现命令）/ 结论 / 产物路径+SHA256。未经证据支撑的否定结论（"无网络能力"）禁止出现。
 
 ## 4. 裸命令模板（legacy 排障专用；日常用 `rpc_driver.py`）
 
@@ -209,20 +180,6 @@ export JAVA_HOME="C:/Java"
 - session/registry 在 `<ws>/rpc-state/`（`GHIDRA_RPC_STATE_DIR`）；daemon 日志在 `<ws>/rpc-localappdata/ghidra-rpc/*.log`
 - 所有 handler 由全局锁串行化——**并发客户端不会并行执行**，长命令会挡住其他命令
 - daemon 崩溃后下一条命令自动按 session 重启（auto-restart）；`stop` 不干净时删 endpoint 文件再起
-
-## 6. 语言/平台路由（识别到就换打法，别硬上通用流程）
-
-| 识别特征（triage_scan 自动报） | 走向 |
-|---|---|
-| `go.buildid` / `runtime.gopanic` / 巨大静态二进制 | 先跑 GoReSym 恢复符号（stripped 也行）→ 只看 `main.*` 包函数；Go string 是 {ptr,len} 非 NUL 结尾，Ghidra 默认字符串分析会漏，装 golang-loader 插件或靠 xref |
-| `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt`  demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数 |
-| `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
-| PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
-| UPX 节名 | `upx -d`；失败说明元数据被篡改，按 UPX 源码手工修头再解 |
-| 自定义壳 / 熵高 | 断 unpack stub 后 dump，或不脱壳用 EmulatorHelper 仿真解密（模板见 scripting.md） |
-| APK 里的 .so | 优先选 x86_64 版本，Ghidra 反编译质量最好；JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
-| WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
-| PE DOS stub 异常大 | 查 DOS stub 藏代码（`int 16h`），Windows 题常见 |
 
 ## 7. PyGhidra 移植须知（踩过的坑，2026-09 实测）
 
@@ -296,7 +253,7 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 | 清单外 API 调用 | `exec-code` 逃生舱 |
 | `@out`/导出/输入文件路径无白名单 | **已接受风险**（本地单机威胁模型）。`exec-code` 是无沙箱 exec、`@out` 可写任意路径——不要把本 skill 暴露给不可信调用方 |
 
-## 9. References（按需加载，别一次全读）
+（按需加载，别一次全读）
 
 | 文件 | 何时读 |
 |---|---|

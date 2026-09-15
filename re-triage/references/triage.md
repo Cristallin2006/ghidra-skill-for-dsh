@@ -1,12 +1,12 @@
 # Triage 分诊（未知二进制的强制起点）
 
 顺序：**Hash → 文件类型 → 壳/熵 → 语言/编译器 → imports 锚点 → 字符串快赢 → 反分析扫描**。
-`triage_scan.py` 自动完成 3~7 的 Ghidra 侧部分；1~2 用系统工具。
+`triage` 命令（ghidra-core §5）自动完成 3~7 的 Ghidra 侧部分；1~2 用系统工具。
 
 ## 1. 硬门（不过门禁止深挖）
 
 - **imports 锚点**：PE 看 IAT；DLL/SYS 的 exports 与 imports 并列必查；解析失败也要把失败输出记进证据，不得跳过。
-- **干净导入表警告**：仅 kernel32/ntdll 且导入 < 15 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载或 API 哈希。triage_scan 的 `clean_iat_warning` 置 true 时，禁止凭静态 IAT 宣称"无网络/无文件能力"——去 bp `GetProcAddress` 或搜哈希常量（ROR13、DJB2 5381、FNV `0xcbf29ce484222325`）。
+- **干净导入表警告**：仅 kernel32/ntdll 且导入 < 15 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载或 API 哈希。triage 的 `clean_iat_warning` 置 true 时，禁止凭静态 IAT 宣称"无网络/无文件能力"——去 bp `GetProcAddress` 或搜哈希常量（ROR13、DJB2 5381、FNV `0xcbf29ce484222325`）。
 - **.NET 无 IAT 不算空**：走 dnSpy/元数据等价路径，不许空过硬门。
 
 ## 2. 高危 API 组合聚类（命中组合才有意义，单点可能是噪声）
@@ -42,7 +42,7 @@ strings binary | grep -iE "^[a-z_][a-z0-9_]*::"   # Rust/C++ 符号
 strings -el binary                      # Windows 宽字符（UTF-16），strings 空时必补
 ```
 
-Ghidra 侧：`search_strings.py "@out" 4 "(?i)flag|correct"` 直接带引用者地址。
+Ghidra 侧：`strings <bin> "(?i)flag|correct"`（命令见 ghidra-core §5）配合 `xrefs-to` 拿引用者地址。
 
 ## 5. 结构侦察清单
 

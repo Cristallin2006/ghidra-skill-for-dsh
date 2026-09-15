@@ -1,4 +1,4 @@
-"""Analysis-option configuration for the ghidra-reverse skill (PyGhidra).
+"""Analysis-option configuration for the ghidra-core skill (PyGhidra).
 
 The Jython-era `set_analysis_options.py` ran as a Ghidra `-preScript`, an
 analyzeHeadless-only hook with no PyGhidra equivalent. Under PyGhidra the same
@@ -68,7 +68,7 @@ def configure(program, mode: str = "minimal") -> dict:
     changed = {}
     # Option writes are program mutations and Ghidra rejects them outside a
     # transaction (db.NoTransactionException).
-    with pyghidra.transaction(program, f"ghidra-reverse analysis profile {mode}"):
+    with pyghidra.transaction(program, f"ghidra-core analysis profile {mode}"):
         for name in HEAVY_ANALYZERS:
             if name not in available:
                 continue

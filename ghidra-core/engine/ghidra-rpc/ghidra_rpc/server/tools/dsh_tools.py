@@ -1,4 +1,4 @@
-"""dsh custom tools for the ghidra-reverse skill (dsh-patch: additive module).
+"""dsh custom tools for the ghidra-core skill (dsh-patch: additive module).
 
 Ports the skill's four unique capabilities into the daemon:
   - exec_code        — open Ghidra-API escape hatch (unsandboxed exec, by design)

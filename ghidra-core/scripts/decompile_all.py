@@ -162,7 +162,7 @@ def run():
             c_path = _DSH_OUT_PATH + ".c"
             cfile = codecs.open(c_path, "w", "utf-8", "replace")
             try:
-                cfile.write(u"/* Decompiled by DSH ghidra-reverse decompile_all.py */\n")
+                cfile.write(u"/* Decompiled by DSH ghidra-core decompile_all.py */\n")
                 cfile.write(u"/* Program: %s  total=%d succeeded=%d failed=%d */\n\n"
                             % (program.getName(), total, succeeded, len(failed)))
                 for entry, fname, sig, c_code in sections:
