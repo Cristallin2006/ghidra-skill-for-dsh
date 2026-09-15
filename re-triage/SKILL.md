@@ -31,6 +31,19 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 2. **手工补充**（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
 3. **下判据 → 选路线**（见下「语言/平台路由」与「路线决策」）。
 
+## 任务地图（一个完整逆向任务的全貌）
+
+本 skill 是入口，不是全部。端到端长这样，每段的知识在对应 skill 里：
+
+```
+① 分诊判型（本 skill）→ ② 选路线（下表）→ ③ 深挖/审计 → ④ 交付
+```
+
+- ③ 读懂逻辑/提取算法 → `ghidra-static`（Recon→Analysis→标注/patch，命令见 ghidra-core）
+- ③ 找漏洞 → `vuln-audit`（按 checklist 逐项排查，命中项回 ghidra-static 深挖确认）
+- ④ 交付纪律（证据带地址+复现命令、产物 SHA256、禁止无证据否定结论）在 `ghidra-static` §交付
+- 任何阶段的命令细节 → `ghidra-core`；静态 15 分钟无关键路径 / 同一路径失败 2 次 → 转动态或换工具（铁律 6，全文见 ghidra-core §1）
+
 ## 路线决策（判完型之后去哪）
 
 | 判定 | 下一步 |
