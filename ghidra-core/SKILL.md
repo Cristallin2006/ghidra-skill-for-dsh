@@ -109,7 +109,12 @@ detached 启动，脚本立即返回 PID，GUI 输出进 `logs/gui-launch.log`�
 python "$SK/doctor.py"          # 全绿 exit 0；任一 fail exit 1
 ```
 
-检查（8 项）：Ghidra 安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv、ghidra-rpc-venv、ghidra-rpc 包（editable 自 engine/）、工作区可写 + junction 解析、现有项目清单、daemon 起停冒烟（可用 `--quick` 跳过最后这项慢的）。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
+输出分两块：
+
+- **Ghidra 核心 8 项**（决定 exit code，fail 即 exit 1）：安装与两个启动器、JAVA_HOME/java 版本、pyghidra-venv、ghidra-rpc-venv、ghidra-rpc 包（editable 自 engine/）、工作区可写 + junction 解析、现有项目清单、daemon 起停冒烟（`--quick` 可跳过这项慢的）
+- **toolchain 三层**（独立成节，不进 exit code）：Tier A 轻量高频（checksec/GoReSym/pyinstxtractor/frida/z3/rust-demangler/upx/unpacker，缺失=warn 按 hint 补装）；Tier B 按需重装（angr/qiling/speakeasy/unipacker/ghidriff/SiMBA/strings/readelf）；Tier C GUI/手工（dnSpyEx/de4dot/DIE/x64dbg/GOOMBA/golang-loader）
+
+**任何 skill 的路由表提到外部工具时，可用性以 doctor 的 toolchain 节为准**——那是唯一真相源。换机器/升级 Ghidra/排查"怎么又起不来"时先跑它。
 
 **外来旧项目**：从别处拷来的项目若 `project.prp` 的 `OWNER` 不是 `dsh`，headless `open_project` 首次打开会自动改写属主；GUI 则要求属主一致，手动把 `OWNER VALUE="..."` 改成 `dsh` 即可。
 

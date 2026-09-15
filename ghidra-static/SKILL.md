@@ -47,7 +47,7 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 
 ## 时间盒与退路
 
-- 静态深挖 ~15 分钟无关键路径 → 转动态（Frida/GDB/Qiling/angr，选型见 `references/ctf-patterns.md` §6）
+- 静态深挖 ~15 分钟无关键路径 → 转动态（Frida/GDB/Qiling/angr，选型见 `references/ctf-patterns.md` §6；**是否已装以 `python "$SK/doctor.py"` 的 toolchain 节为准**，未装按 hint 补装或换已装工具）
 - 同一路径失败 2 次 → 换工具，禁止空转
 - daemon 整体挂掉 → ghidra-core §4 的 legacy driver.py 后路
 

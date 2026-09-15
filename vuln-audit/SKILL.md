@@ -23,7 +23,7 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 2. 按 `references/vuln-patterns.md` 的**检查项清单**逐项过：每项给出识别信号、用什么命令查、判定标准、常见误报
 3. 每个命中项记录：地址 / 证据（伪码或汇编摘录）/ 可达性（用户输入能否到达）/ 严重度初判
 4. **可达性优先于模式数量**：一个用户输入直达的 strcpy 胜过十个内部路径的 gets。用 `xrefs-to` 确认调用者、用 `decompile` 追输入来源（main 参数/recv/read/文件/环境变量）
-5. 交付：命中清单 + 每项证据 + 建议的 fuzz/动态验证入口
+5. 交付：命中清单 + 每项证据 + 建议的 fuzz/动态验证入口（动态工具是否已装以 `python "$SK/doctor.py"` 的 toolchain 节为准，未装的按 hint 装或改静态验证）
 
 ## 覆盖的检查项（细则在 references/vuln-patterns.md）
 

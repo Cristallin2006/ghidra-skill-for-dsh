@@ -14,7 +14,7 @@
 
 ## 各壳对策
 
-### UPX（Tier 1，直接解压，不执行样本）
+### UPX（Tier A，直接解压，不执行样本）
 
 - 原生 `upx -d -o <out> <sample>`（Unpacker 自动调；PATH 须有 upx）
 - **GUARD_CF 的 PE 要先 `upx --force` 打包**才能被 upx 自己解（实测 whoami.exe 如此）；拿到别人用 --force 打的包时 `upx -d` 可能也报不支持，同样加 `--force`
@@ -25,13 +25,13 @@
   4. 修完 `upx -d`；仍失败进失败阶梯 ③
 - 验证锚点：unpacked 大小 ≈ 原始、熵 5~6、字符串数翻倍级增长
 
-### ASPack / Themida / MPRESS（Tier 2，Unipacker 仿真 dump，**PE32 only**）
+### ASPack / Themida / MPRESS（Tier B，Unipacker 仿真 dump，**PE32 only**）
 
 - Unicorn 仿真入口 stub → 检测"脱壳完成"（节跳转 / write+execute / ASPack 内建逻辑）→ dump 内存镜像 + 修 IAT
 - Unipacker 有本仓库补丁：逐页安全读内存（未映射页补零）+ dump 容错（IAT 修不了就清零 import 目录也写出）
 - **PE32+（64 位）直接报 "Not a valid PE file"**——别在 64 位上浪费时间
 
-### VMProtect（Tier 2）
+### VMProtect（Tier B）
 
 - 32 位：同 Unipacker unknown 模式（仿真到启发式停，dump）；可能需多轮（每层剥一次）
 - 64 位：Qiling + Windows rootfs，带超时跑，从内存按 image base + SizeOfImage dump；**无"脱壳完成"启发式，dump 可能是部分的，IAT 不修**——交付时必须标注置信度

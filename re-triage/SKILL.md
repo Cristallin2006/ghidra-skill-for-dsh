@@ -17,6 +17,8 @@ SK="$HOME/.dsh/skills/ghidra-core/scripts"     # 唯一代码家
 RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 ```
 
+> 路由表提到的外部工具（checksec/GoReSym/rustfilt 替代/dnSpyEx 等）是否已装：`python "$SK/doctor.py"` 的 toolchain 节为准；未装的按其 hint 装或走对应 skill 的失败阶梯。
+
 ## 流程（5~15 分钟，强制起点）
 
 1. **ensure + triage 一把出**（daemon 没起就起、样本没 load 就 load，含全量分析）：

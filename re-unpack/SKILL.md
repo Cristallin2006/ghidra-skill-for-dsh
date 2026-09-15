@@ -13,7 +13,7 @@ whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导
 ## 路径约定
 
 ```bash
-UPX="$HOME/Desktop/src/tools/upx/upx.exe"                     # Tier 1 原生 UPX
+UPX="$HOME/Desktop/src/tools/upx/upx.exe"                     # Tier A 原生 UPX
 UNP="$HOME/Desktop/src/unpacker-venv/Scripts"                 # Unpacker venv（Python 3.12, editable）
 export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PATH 找原生 upx
 ```
@@ -34,11 +34,13 @@ export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PA
 
 | 壳 | 特征 | 工具 |
 |---|---|---|
-| UPX | 节名 UPX0/UPX1、`UPX!` 魔数 | **Tier 1**：Unpacker 自动调原生 `upx -d`；或直接 `"$UPX" -d <sample> -o <out>` |
-| ASPack / Themida (PE32) | `.aspack`/`.themida` 节 | Tier 2：unipacker（**未装**，见下安装指令） |
-| VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier 2：qiling + rootfs（**未装**，见下） |
-| MPRESS | `.MPRESS1/2` 节 | Tier 2：unipacker |
+| UPX | 节名 UPX0/UPX1、`UPX!` 魔数 | **Tier A**（已装）：Unpacker 自动调原生 `upx -d`；或直接 `"$UPX" -d <sample> -o <out>` |
+| ASPack / Themida (PE32) | `.aspack`/`.themida` 节 | Tier B：unipacker（按需装，见下安装指令） |
+| VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier B：qiling + rootfs（按需装，见下） |
+| MPRESS | `.MPRESS1/2` 节 | Tier B：unipacker |
 | 未知/自定义壳 | 熵高、节名正常但 IAT 干净 | 失败阶梯 ③④ |
+
+Tier 术语与 doctor toolchain 节一致（A=已装轻量 / B=按需重装 / C=GUI 手工）；任一工具是否已装以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core）。
 
 ### 3. 验证（强制，不验证 = 没脱开）
 
@@ -54,7 +56,7 @@ export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PA
 ## 失败阶梯（逐级时间盒，单级 ≤15 分钟）
 
 ① **UPX 元数据篡改**（`upx -d` 报 not packed/header corrupted）→ 按 UPX 源码手工修 `UPX!` 魔数/`l_info`/`p_info` 头再 `upx -d`（细节见 `references/unpack-playbook.md` §UPX 修头）
-② **unipacker / qiling 仿真脱壳**——未装时**明确声明"此层不可用"**，不要硬试。安装指令：
+② **unipacker / qiling 仿真脱壳**（Tier B）——doctor toolchain 显示未装时**明确声明"此层不可用"**，不要硬试。安装指令：
    - unipacker：`"$UNP/python.exe" -m pip install "C:/path/to/unpacker-src[unipacker]"`（Python 3.12 需 setuptools<81，extra 已钉）
    - qiling：`pip install "…[emulation]"` + 准备 rootfs（`~/Desktop/src/qiling-rootfs`）
 ③ **Ghidra 仿真解密 stub**：`emulate-function` 跑 unpack stub 后 dump（命令与用法 → ghidra-core §5；不在这里展开）
