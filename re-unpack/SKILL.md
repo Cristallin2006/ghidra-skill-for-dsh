@@ -35,8 +35,8 @@ export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PA
 | 壳 | 特征 | 工具 |
 |---|---|---|
 | UPX | 节名 UPX0/UPX1、`UPX!` 魔数 | **Tier A**（已装）：Unpacker 自动调原生 `upx -d`；或直接 `"$UPX" -d <sample> -o <out>` |
-| ASPack / Themida (PE32) | `.aspack`/`.themida` 节 | Tier B：unipacker（按需装，见下安装指令） |
-| VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier B：qiling + rootfs（按需装，见下） |
+| ASPack / Themida (PE32) | `.aspack`/`.themida` 节 | Tier B（已装）：unipacker（unpacker-venv 的 `[unipacker]` extra，Unpacker 自动调） |
+| VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier B（已装）：qiling 1.4.6（WSL `~/re-pwn-venv`）+ rootfs `/root/qiling-rootfs`（x86/x8664 windows）——Unpacker 的 qiling 档在 WSL 里跑 |
 | MPRESS | `.MPRESS1/2` 节 | Tier B：unipacker |
 | 未知/自定义壳 | 熵高、节名正常但 IAT 干净 | 失败阶梯 ③④ |
 
@@ -56,9 +56,7 @@ Tier 术语与 doctor toolchain 节一致（A=已装轻量 / B=按需重装 / C=
 ## 失败阶梯（逐级时间盒，单级 ≤15 分钟）
 
 ① **UPX 元数据篡改**（`upx -d` 报 not packed/header corrupted）→ 按 UPX 源码手工修 `UPX!` 魔数/`l_info`/`p_info` 头再 `upx -d`（细节见 `references/unpack-playbook.md` §UPX 修头）
-② **unipacker / qiling 仿真脱壳**（Tier B）——doctor toolchain 显示未装时**明确声明"此层不可用"**，不要硬试。安装指令：
-   - unipacker：`"$UNP/python.exe" -m pip install "C:/path/to/unpacker-src[unipacker]"`（Python 3.12 需 setuptools<81，extra 已钉）
-   - qiling：`pip install "…[emulation]"` + 准备 rootfs（`~/Desktop/src/qiling-rootfs`）
+② **unipacker / qiling 仿真脱壳**（Tier B，**均已装**）：unipacker 在 unpacker-venv（Unpacker 对 PE32 自动调）；qiling 在 WSL（`/root/re-pwn-venv`，rootfs `/root/qiling-rootfs`，注意 Unpacker 的 qiling 档要在 WSL 内手动跑，不在 Windows 侧）。若 doctor toolchain 显示缺失则**明确声明"此层不可用"**并按其 hint 装回，不要硬试。
 ③ **Ghidra 仿真解密 stub**：`emulate-function` 跑 unpack stub 后 dump（命令与用法 → ghidra-core §5；不在这里展开）
 ④ **Frida 动态 dump**：跑起来后从内存抓 OEP 镜像（工具选型 → ghidra-static `references/ctf-patterns.md` §6）
 ⑤ **全部失败** → 显式声明"未脱壳"，交付 stub 级分析（stub 功能、IAT 线索、入口行为）并**明示置信度**

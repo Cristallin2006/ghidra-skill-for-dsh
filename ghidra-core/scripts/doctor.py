@@ -33,6 +33,16 @@ _TOOLS_DIR = Path.home() / "Desktop" / "src" / "tools"
 _UNP_VENV = Path.home() / "Desktop" / "src" / "unpacker-venv" / "Scripts"
 
 
+_WSL_PY_VENV = "/root/re-pwn-venv"  # WSL Ubuntu 内的 pwn venv
+
+
+def _wsl_ok():
+    proc = subprocess.run(["wsl", "-d", "Ubuntu", "-u", "root", "-e",
+                           "bash", "-lc", "true"],
+                          capture_output=True, timeout=30)
+    return proc.returncode == 0
+
+
 def _probe(entry):
     import shutil
 
@@ -44,14 +54,25 @@ def _probe(entry):
         found = shutil.which(entry.exe)
         return bool(found), found or f"{entry.exe} not on PATH"
     if kind == "pyimport":
-        py = _RE_TOOLS / "python.exe"
+        venv = Path(entry.venv) if getattr(entry, "venv", None) else _RE_TOOLS
+        py = venv / "python.exe"
         if not py.is_file():
-            return False, f"re-tools-venv missing ({py})"
+            return False, f"venv missing ({py})"
         proc = subprocess.run(
             [str(py), "-c", f"import {entry.module}"],
             capture_output=True, text=True, timeout=60)
         ok = proc.returncode == 0
-        return ok, f"module {entry.module} in re-tools-venv: {'ok' if ok else proc.stderr.strip()[:120]}"
+        return ok, f"module {entry.module} in {venv.parent.name}: {'ok' if ok else proc.stderr.strip()[:120]}"
+    if kind == "wsl":
+        # entry.cmd runs inside `wsl -d Ubuntu -u root bash -lc`
+        if not _wsl_ok():
+            return False, "WSL distro Ubuntu not available"
+        proc = subprocess.run(["wsl", "-d", "Ubuntu", "-u", "root", "-e",
+                               "bash", "-lc", entry.cmd],
+                              capture_output=True, text=True, timeout=60)
+        ok = proc.returncode == 0
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+        return ok, "wsl: " + (out[0][:120] if out else entry.cmd)
     raise ValueError(kind)
 
 
@@ -98,50 +119,85 @@ TOOL_REGISTRY = [
     _Tool(name="unpacker", tier="A", kind="path",
           path=str(_UNP_VENV / "unpacker.exe"), refs="re-unpack",
           hint="python3.12 -m venv unpacker-venv && pip install -e <Unpacker 克隆>"),
-    # ── Tier B: heavy, install on demand ──
+    _Tool(name="file", tier="A", kind="which", exe="file",
+          refs="re-triage（判型第一步）",
+          hint="Git Bash 自带"),
+    # ── Tier B: heavy pip / WSL / rootfs ──
     _Tool(name="angr", tier="B", kind="pyimport", module="angr",
           refs="ghidra-static/re-triage/vuln-audit",
           hint="pip install angr（进 re-tools-venv）"),
-    _Tool(name="qiling", tier="B", kind="pyimport", module="qiling",
-          refs="ghidra-static/re-triage/re-unpack",
-          hint="pip install qiling + 准备 rootfs（~/Desktop/src/qiling-rootfs）"),
     _Tool(name="speakeasy", tier="B", kind="pyimport", module="speakeasy",
           refs="（仿真备选）",
-          hint="pip install speakeasy-emulator（进 re-tools-venv）"),
+          hint="pip install speakeasy-emulator setuptools<81（进 re-tools-venv；Py3.12 需 distutils shim）"),
     _Tool(name="unipacker", tier="B", kind="pyimport", module="unipacker",
-          refs="re-unpack",
+          venv=str(_UNP_VENV), refs="re-unpack",
           hint='pip install "unpacker[unipacker]"（进 unpacker-venv，已钉 setuptools<81）'),
-    _Tool(name="ghidriff", tier="B", kind="pyimport", module="ghidriff",
+    _Tool(name="ghidriff", tier="B", kind="path",
+          path=str(_RE_TOOLS / "ghidriff.exe"),
           refs="ghidra-core（references/headless.md §8）",
-          hint="pip install ghidriff"),
-    _Tool(name="simba", tier="B", kind="pyimport", module="simba",
+          hint="pip install ghidriff（进 re-tools-venv）"),
+    _Tool(name="simba", tier="B", kind="pyimport", module="simba_simplifier",
           refs="re-triage（references/anti-analysis.md MBA 化简）",
-          hint="pip install simba-simplifier"),
-    _Tool(name="strings", tier="B", kind="which", exe="strings",
-          refs="re-triage（strings -el 补宽字符）",
-          hint="Git Bash 无 binutils；用 python re.findall(rb'[ -~]{4,}', data) 等价物或装 binutils"),
-    _Tool(name="readelf", tier="B", kind="which", exe="readelf",
-          refs="re-triage/ghidra-static",
-          hint="Git Bash 无 binutils；ELF 解析用 pyelftools（unpacker-venv 已带）"),
-    # ── Tier C: GUI / manual ──
-    _Tool(name="dnSpyEx", tier="C", kind="which", exe="dnSpy",
-          refs="re-triage（.NET 样本）",
-          hint="github.com/dnSpyEx/dnSpy release 解压即用（GUI）"),
-    _Tool(name="de4dot", tier="C", kind="which", exe="de4dot",
-          refs="re-triage（.NET 混淆）",
-          hint="github.com/de4dot/de4dot 构建或取 release（CLI）"),
-    _Tool(name="DIE", tier="C", kind="which", exe="diec",
+          hint="pip install simba-simplifier（import 名 simba_simplifier）"),
+    _Tool(name="strings(wsl)", tier="B", kind="wsl",
+          cmd="command -v strings", refs="re-triage（strings -el 补宽字符）",
+          hint="WSL apt install binutils（Git Bash 无 binutils）"),
+    _Tool(name="readelf(wsl)", tier="B", kind="wsl",
+          cmd="command -v readelf", refs="re-triage/ghidra-static（ELF 分析）",
+          hint="WSL apt install binutils"),
+    _Tool(name="gdb(wsl)", tier="B", kind="wsl",
+          cmd="command -v gdb", refs="ghidra-static/re-triage（动态调试）",
+          hint="WSL apt install gdb"),
+    _Tool(name="pwntools(wsl)", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/pwn && {_WSL_PY_VENV}/bin/pwn version",
+          refs="ghidra-static（pwn 脚本骨架）",
+          hint="WSL python3 -m venv ~/re-pwn-venv && pip install pwntools"),
+    _Tool(name="ROPgadget(wsl)", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/ROPgadget && {_WSL_PY_VENV}/bin/ROPgadget --version",
+          refs="ghidra-static（ROP 链）",
+          hint="WSL re-pwn-venv pip install ROPgadget"),
+    _Tool(name="ropper(wsl)", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/ropper && {_WSL_PY_VENV}/bin/ropper --version",
+          refs="ghidra-static（ROP 链备选）",
+          hint="WSL re-pwn-venv pip install ropper"),
+    _Tool(name="one_gadget(wsl)", tier="B", kind="wsl",
+          cmd="command -v one_gadget", refs="ghidra-static（libc 一把梭）",
+          hint="WSL gem install one_gadget（需 ruby-full）"),
+    _Tool(name="seccomp-tools(wsl)", tier="B", kind="wsl",
+          cmd="command -v seccomp-tools", refs="ghidra-static（沙箱规则分析）",
+          hint="WSL gem install seccomp-tools"),
+    _Tool(name="pwndbg/gef(wsl)", tier="B", kind="wsl",
+          cmd="test -f /root/.gdbinit && grep -q -e pwndbg -e gef /root/.gdbinit",
+          refs="ghidra-static（gdb 增强）",
+          hint="WSL: pwndbg git clone+setup.sh，或 gef 单脚本"),
+    _Tool(name="qiling(wsl)", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/python && {_WSL_PY_VENV}/bin/python -c 'import qiling'",
+          refs="ghidra-static/re-triage/re-unpack（免疫反调试仿真/VMProtect64）",
+          hint="WSL re-pwn-venv pip install qiling + rootfs ~/qiling-rootfs"),
+    _Tool(name="qemu(wsl)", tier="B", kind="wsl",
+          cmd="command -v qemu-system-x86_64", refs="re-triage（固件/异架构）",
+          hint="WSL apt install qemu-system-x86"),
+    # ── Tier C: GUI / plugins / manual ──
+    _Tool(name="dnSpyEx", tier="C", kind="path",
+          path=str(_TOOLS_DIR / "dnSpyEx" / "dnSpy.exe"), refs="re-triage（.NET 样本）",
+          hint="github.com/dnSpyEx/dnSpy release win64 zip 解压（GUI）"),
+    _Tool(name="de4dot", tier="C", kind="path",
+          path=str(_TOOLS_DIR / "de4dot" / "de4dot.exe"), refs="re-triage（.NET 混淆）",
+          hint="github.com/ViRb3/de4dot-cex release（CLI）"),
+    _Tool(name="DIE", tier="C", kind="path",
+          path=str(_TOOLS_DIR / "die" / "die" / "diec.exe"),
           refs="re-triage（查壳 GUI/CLI）",
-          hint="github.com/horsicq/DIE-engine release；diec 是其 CLI"),
-    _Tool(name="x64dbg", tier="C", kind="which", exe="x64dbg",
+          hint="github.com/horsicq/DIE-engine win64 portable zip；diec 是其 CLI"),
+    _Tool(name="x64dbg", tier="C", kind="path",
+          path=str(_TOOLS_DIR / "x64dbg" / "release" / "x64" / "x64dbg.exe"),
           refs="ghidra-static（Windows GUI crackme 动态）",
-          hint="x64dbg.com 下载快照解压（GUI 调试器）"),
-    _Tool(name="GOOMBA", tier="C", kind="which", exe="GOOMBA",
+          hint="github.com/x64dbg/x64dbg snapshot zip 解压（GUI 调试器）"),
+    _Tool(name="GOOMBA", tier="C", kind="which", exe="GOOMBA-NOT-INSTALLED",
           refs="re-triage（references/anti-analysis.md MBA 化简）",
-          hint="Ghidra 插件 jar 拷进 <ghidra>/Extensions/Ghidra 后 GUI 启用"),
-    _Tool(name="golang-loader", tier="C", kind="which", exe="golang-loader",
+          hint="不装：gooMBA 实为 Hex-Rays IDA 插件（HexRaysSA/goomba），本机无 IDA 许可；MBA 化简用 Tier B 的 SiMBA"),
+    _Tool(name="golang-loader", tier="C", kind="which", exe="golang-loader-NOT-INSTALLED",
           refs="re-triage（Go 字符串恢复）",
-          hint="Ghidra 插件（GUI 安装）；或用 GoReSym（Tier A）替代大部分场景"),
+          hint="不装：上游仅 Jython 时代脚本源码无 release；GoReSym（Tier A）已覆盖主场景"),
 ]
 
 

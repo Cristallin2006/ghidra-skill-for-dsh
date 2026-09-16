@@ -41,18 +41,7 @@ vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
    ~/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts/python.exe -m pip install \
        -e ~/.dsh/skills/ghidra-core/engine/ghidra-rpc
    ```
-3. 工具层（三层；是否已装以 `doctor.py` 的 toolchain 节为唯一真相源）：
-   ```bash
-   # Tier A（轻量高频，建议全装）：
-   python3.12 -m venv ~/Desktop/src/re-tools-venv
-   ~/Desktop/src/re-tools-venv/Scripts/python.exe -m pip install frida-tools z3-solver checksec.py rust-demangler
-   # GoReSym / UPX：github release win64 zip 解压到 ~/Desktop/src/tools/{goresym,upx}/
-   # pyinstxtractor：单 .py 拷到 ~/Desktop/src/tools/pyinstxtractor/
-   # 脱壳（re-unpack）：python3.12 -m venv ~/Desktop/src/unpacker-venv
-   #   && pip install -e <Unpacker 克隆路径>
-   # Tier B（angr/qiling/speakeasy/unipacker/ghidriff/SiMBA）：按需，hint 见 doctor 输出
-   # Tier C（dnSpyEx/de4dot/DIE/x64dbg/GOOMBA/golang-loader）：GUI/手工，hint 见 doctor 输出
-   ```
+3. 工具层：**完整清单与安装步骤见 [TOOLCHAIN.md](TOOLCHAIN.md)**（Ghidra 引擎栈 / Windows CLI 双 venv / tools\ 绿色软件 / WSL Ubuntu / Ghidra 插件 / 未装项）。三层分级：Tier A 轻量高频全装、Tier B 重 pip 或 WSL、Tier C GUI/插件。是否已装以 `doctor.py` 的 toolchain 节为机器可读真相源。
 4. 设 `GHIDRA_INSTALL_DIR`（Ghidra 12.x 安装目录，含 `support/` 那层）与 `JAVA_HOME`（JDK 21+）
 5. 自检：`python ~/.dsh/skills/ghidra-core/scripts/doctor.py`（8 项全绿 exit 0）
 

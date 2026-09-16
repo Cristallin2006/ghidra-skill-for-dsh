@@ -58,19 +58,21 @@
 
 ## 6. 动态工具选型（超出 Ghidra 范围时）
 
+> 本机已装状态（2026-09-16 实测，doctor toolchain 节为实时真相源）：Frida ✅（re-tools-venv `Scripts/frida.exe`）；gdb+pwndbg ✅（WSL：`wsl -d Ubuntu -u root -- gdb`）；Qiling ✅（WSL `/root/re-pwn-venv`，Windows rootfs `/root/qiling-rootfs`）；angr ✅（re-tools-venv import）；x64dbg ✅（`~/Desktop/src/tools/x64dbg/release/x64/x64dbg.exe`）；pwntools/ROPgadget/ropper/one_gadget/seccomp-tools ✅（均在 WSL）。strace/LD_PRELOAD 类命令需在 WSL 里跑。
+
 | 需求 | 工具 |
 |---|---|
 | hook 比较函数抓期望值 | Frida：`frida -f ./binary -l hook.js --no-pause`；`Interceptor.replace` 直接替换校验函数；Stalker 指令 trace；`Memory.scan` 扫 `flag{` |
 | 自动探路 | angr：`simgr.explore(find=, avoid=)`；可打印 ASCII + 已知前缀约束；hook 掉 crypto/IO 防路径爆炸 |
 | 免疫反调试 | Qiling：`ql.os.set_syscall("ptrace", hook)`，无调试器痕迹 |
-| 不解壳跑单函数 | Ghidra EmulatorHelper（scripting.md §仿真） |
+| 不解壳跑单函数 | Ghidra EmulatorHelper（scripting.md §仿真；rpc `emulate-function` 命令见 ghidra-core §5） |
 | 反编译看不懂 | dogbolt.org 多反编译器 side-by-side 对比 |
 | Windows GUI crackme | x64dbg 断 `GetWindowTextA`/`MessageBoxA`；Scylla 修 IAT |
-| 冻结随机性 | LD_PRELOAD 冻结 time()/rand() → VM 变确定性 oracle |
+| 冻结随机性 | LD_PRELOAD 冻结 time()/rand() → VM 变确定性 oracle（WSL 内执行） |
 
 ## 7. 提取类技巧（不用跑二进制）
 
-- 嵌入资源：`PK\x03\x04` 嵌入 ZIP；`readelf -s` 找 named symbols → dd 提取 → 纯离线解。
+- 嵌入资源：`PK\x03\x04` 嵌入 ZIP；`readelf -s` 找 named symbols → dd 提取 → 纯离线解（readelf/objdump 在 WSL 里跑，见 §6 注）。
 - 批量立即数提取：`objdump -M intel -d binary | grep -P "cmp\s+rdi" | grep -oP "0x\w{1,2}" | xxd -r -p`——**Ghidra 侧等价物就是 headless 脚本**（scripting.md §8 决策树/XOR 提取模板）。
 - 补丁速查（pwntools）：`elf.asm(elf.symbols.ptrace, 'ret')`、`'nop'`、`'xor eax, eax; ret'`、`'mov eax, 1; ret'`；Ghidra 内 patch 用 `assemble`/`write-bytes`，导出用 `export-binary`（Original File 格式，不用开 GUI；命令见 ghidra-core §5）。
 - JNZ(0x75)↔JZ(0x74) 互翻是最常见单字节 patch。

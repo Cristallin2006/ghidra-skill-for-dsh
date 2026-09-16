@@ -35,6 +35,11 @@
 
 ## 4. 字符串快赢（triage 期必扫）
 
+> **Git Bash 无 binutils**：`strings`/`readelf`/`nm`/`objdump` 一律加 `wsl -d Ubuntu -u root --` 前缀在 Ubuntu 里跑，Windows 路径写 `/mnt/c/...`。例：
+> `wsl -d Ubuntu -u root -- strings -n 6 /mnt/c/path/to/binary | grep -iE "flag|pass"`
+> `wsl -d Ubuntu -u root -- readelf -S /mnt/c/path/to/binary | head -20`
+> （纯字符串提取也可用 Python 等价物：`re.findall(rb"[ -~]{4,}", open(f,"rb").read())`）
+
 ```bash
 strings -n 6 binary | grep -iE "flag|pass|correct|wrong|usage|key"
 strings binary | grep "/home/"          # 未 strip 泄漏编译路径
