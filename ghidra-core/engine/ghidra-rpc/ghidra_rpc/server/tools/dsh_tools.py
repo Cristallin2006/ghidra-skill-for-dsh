@@ -13,6 +13,7 @@ raise on error.
 from __future__ import annotations
 
 import json
+import os
 import re
 
 from ghidra_rpc.server.main import register_handler
@@ -312,11 +313,85 @@ def _handle_triage(ctx, args: dict) -> dict:
         dotnet = any(lib.lower().startswith("mscoree") for lib in imports)
         if not dotnet:
             dotnet = any(name == "_CorExeMain" for _, name in all_import_names)
-        upx = any("UPX" in bname.upper() for bname in block_names)
+
+        # --- packer detection (dsh-patch: multi-signal; a bare boolean lies) ---
+        # Signal 1: section names. Trivially defeated by renaming sections —
+        # exactly what CTF authors do — so it can never stand alone.
+        upx_signals = []
+        upx_sections = [n for n in block_names if "UPX" in n.upper()]
+        if upx_sections:
+            upx_signals.append({"signal": "section-name",
+                                "detail": ",".join(upx_sections)})
+        # Signal 2: UPX! magic in the raw file. Survives section renaming;
+        # lives in the packheader/stub which may not be mapped into memory.
+        magic_hits = []
+        try:
+            exe_path = str(program.getExecutablePath() or "")
+            # Ghidra may report Git-Bash-flavored "/C:/..." paths on Windows
+            if len(exe_path) > 3 and exe_path[0] == "/" \
+                    and exe_path[2] == ":" and exe_path[3] == "/":
+                exe_path = exe_path[1:]
+            if exe_path and os.path.isfile(exe_path) \
+                    and os.path.getsize(exe_path) < 512 * 1024 * 1024:
+                with open(exe_path, "rb") as fh:
+                    blob = fh.read()
+                off = blob.find(b"UPX!")
+                while off != -1 and len(magic_hits) < 8:
+                    magic_hits.append(hex(off))
+                    off = blob.find(b"UPX!", off + 1)
+        except Exception:
+            pass
+        if magic_hits:
+            upx_signals.append({"signal": "magic:UPX!",
+                                "detail": "file offsets " + ",".join(magic_hits)})
+        # Signal 3: structure — few imports + entry in the last executable
+        # block + an uninitialized writable block (UPX0-style hollow section).
+        blocks = list(mem.getBlocks())
+        exec_blocks = [b for b in blocks if b.isExecute()]
+        entry_in_last = False
+        if exec_blocks:
+            last_exec = exec_blocks[-1]
+            lo = last_exec.getStart().getOffset()
+            hi = last_exec.getEnd().getOffset()
+            for rec in entries + exports:
+                try:
+                    ea = int(str(rec["address"]), 16)
+                except ValueError:
+                    continue
+                if lo <= ea <= hi:
+                    entry_in_last = True
+                    break
+        hollow = any((not b.isInitialized()) and b.isWrite() for b in blocks)
+        structural = []
+        if total_imports < 10:
+            structural.append(f"imports={total_imports}<10")
+        if entry_in_last:
+            structural.append("entry-in-last-exec-block")
+        if hollow:
+            structural.append("uninitialized-writable-block")
+
+        if upx_signals:
+            packer_verdict = "upx"
+        elif len(structural) >= 2:
+            packer_verdict = "packed-unknown"
+        else:
+            packer_verdict = "none"
+        result["packer"] = {
+            "verdict": packer_verdict,
+            "upx_signals": upx_signals,
+            "structural_signals": structural,
+            "advice": (
+                "UPX 指纹命中；upx -d 失败（头被篡改）时先跑 re-unpack 的 upx_repair.py"
+                if packer_verdict == "upx" else
+                "结构特征疑似加壳但无 UPX 指纹——按 re-unpack 流程人工判壳"
+                if packer_verdict == "packed-unknown" else
+                "verdict=none 不排除壳——节名可改、magic 可抹、结构可伪装；"
+                "imports 极少/入口在末节/高熵等任一疑点都要人工复核"),
+        }
 
         result["lang_hints"] = {
             "go": hints["go"], "rust": hints["rust"], "dotnet": dotnet,
-            "python": hints["python"], "upx": upx
+            "python": hints["python"], "upx": packer_verdict == "upx"
         }
 
         # --- PE extras (best effort) ---

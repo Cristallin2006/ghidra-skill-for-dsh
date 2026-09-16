@@ -32,6 +32,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# dsh/Git Bash capture decodes stdout as UTF-8; daemon JSON may carry
+# Chinese advice fields — force UTF-8 or a cp936 console emits mojibake.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream.encoding and _stream.encoding.lower() not in ("utf-8", "utf8"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 HOME = Path(os.path.expanduser("~"))
 RPC_VENV_PYTHON = HOME / "Desktop" / "src" / "ghidra-bridge" / \
     "ghidra-rpc-venv" / "Scripts" / "python.exe"
@@ -253,7 +259,14 @@ def main(argv: list[str]) -> int:
     elif our_key:
         rest = [our_key]
 
-    return emit(run_rpc(env, gpr, [sub] + rest), out_path)
+    resp = run_rpc(env, gpr, [sub] + rest)
+    if not resp.get("ok") and "NotRunning" in str(resp.get("error", "")):
+        # stop/crash -> restart race: the daemon died between ensure and this
+        # command. Re-ensure once and retry the command once.
+        ensured = ensure_binary(env, binary)
+        if ensured.get("ok"):
+            resp = run_rpc(env, gpr, [sub] + rest)
+    return emit(resp, out_path)
 
 
 if __name__ == "__main__":

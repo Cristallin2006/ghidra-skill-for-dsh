@@ -76,3 +76,12 @@
 - 批量立即数提取：`objdump -M intel -d binary | grep -P "cmp\s+rdi" | grep -oP "0x\w{1,2}" | xxd -r -p`——**Ghidra 侧等价物就是 headless 脚本**（scripting.md §8 决策树/XOR 提取模板）。
 - 补丁速查（pwntools）：`elf.asm(elf.symbols.ptrace, 'ret')`、`'nop'`、`'xor eax, eax; ret'`、`'mov eax, 1; ret'`；Ghidra 内 patch 用 `assemble`/`write-bytes`，导出用 `export-binary`（Original File 格式，不用开 GUI；命令见 ghidra-core §5）。
 - JNZ(0x75)↔JZ(0x74) 互翻是最常见单字节 patch。
+
+## 8. 流水线求逆纪律（先正向，后求逆）
+
+`flag → 变换A → 变换B → 比较目标` 类题目的标准死法：直接求逆，模型错了也不知道错在哪。纪律：
+
+1. **先正向跑通**：拿到疑似密钥/密文后，先用已知输入（WP 答案、或任意输入+运行时抓的期望值）把完整流水线**正向**跑一遍——oracle.py 调真实函数、或 Python 重实现——确认模型能**复现已知输出**，再动手求逆。复现不了 = 模型错，回去修模型，禁止直接求逆。
+2. **逐级对照中间态**：每个变换的输入/输出缓冲区用 `oracle.py --break <变换后PC> --dump <缓冲区>:<len>` 抓真实值，与模型预测逐级比对——第一级不符就停，后面全是垃圾。
+3. **比较目标的读数只信 read_views**：CTF 题的比较目标常是内嵌二进制（IDA/反编译器渲染成 hex 文本时吞前导 0，`0x01`→`1`），`bytes.fromhex` 位数对不上就是信号。`read_views.py --expect-hex "<渲染文本>"` 一步对照，不符则以真实字节整体作废渲染文本。
+4. **垃圾输入反推不出门槛**：`read()` 不补 NUL 时 strlen 会读到栈残留——门槛判定要用**已知能通过的输入**逼近，不要用垃圾输入的诡异行为反推。

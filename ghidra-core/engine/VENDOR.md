@@ -29,6 +29,11 @@
 5. Custom dsh tools added under `ghidra_rpc/server/tools/dsh_tools.py`
    (exec_code, triage, export_binary, emulate_function) + CLI subcommands in
    `ghidra_rpc/cli.py`. These are additive, not patches to upstream logic.
+   triage's packer detection is multi-signal by design (section names +
+   `UPX!` magic scan of the raw file + structural heuristics, verdict in the
+   `packer` block) — the old single section-name boolean misled agents when
+   CTF authors renamed sections; `lang_hints.upx` is kept only as a compat
+   field derived from the verdict.
 
 When rebasing onto a newer upstream, re-apply the `# dsh-patch:` hunks and
 re-check the tool registration in `server/tools/__init__.py`.

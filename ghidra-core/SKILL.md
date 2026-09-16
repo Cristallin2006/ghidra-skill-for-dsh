@@ -46,7 +46,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个。**2026-09-15 起执行引擎迁移为 ghidra-rpc 常驻 daemon，这 25 个脚本冻结为 legacy 备查**（见 §5 第 3 层），`driver.py` 保留为 daemon 挂掉时的后路。
 
-## 1. 七条铁律（先读这个再动手）
+## 1. 八条铁律（先读这个再动手）
 
 1. **开工先 ensure；批量场景用批量工具**：daemon 温热后单次命令 ~0.2s，"一个函数一次调用"不再是罪。但全量反编译/全文搜索仍优先 `decompile-all` / `search-decompiled` 这类服务端批量工具——别 for 循环 1000 次单条 `decompile`（每条都要序列化过锁）。
 2. **导入分析一次做足**：`rpc_driver.py ensure` 的 load 只做一次全量分析；之后所有查询/写操作都打在同一个已分析程序上，不会重跑分析。
@@ -57,6 +57,8 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 7. **死循环断路器（机械触发，不靠自觉）**：循环签名 = 第二次回到同一字节区域/同一假设继续分析。执行载体是 `scripts/ledger.py`：每个区域级观察 MUST 走 `ledger.py observe` 落账——同一区域第二次 observe 时脚本**拒绝入账（exit 2）**，除非 `--delta` 回答"这次观测和上次差在哪"；答不出 = 断路器触发，按脚本打印的菜单升级：换工具 / 转动态 / 问用户，并用 `ledger.py stuck` 留痕——禁止换第 3 种方式重试同一路径。字节只能通过工具解读（反汇编、反编译、脚本输出）；肉眼/裸 hex 仅用于验证工具输出，脚本对同一区域只放行 2 次，第 3 次直接拒绝。packed/加密字节在信息论上是噪声，内容级死磕一律禁止——先脱壳（re-unpack）或仿真（`emulate-function`）。
 
 铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（ledger.py 机械拦截原地打转）——先命中哪条执行哪条。台账 = `<ws>/out/<名>.ledger.jsonl`（机器真相，append-only）+ 每次入账自动重建的 `<名>.ledger.md`（人读视图）：权威结论写入即锁定（同 id 覆盖必须 `--overturn`+新证据）、先查后析（`ledger.py query`）、推翻留痕——机制细节见 `references/evidence-ledger.md`。
+
+8. **读数纪律（第一嫌疑人是读数，不是程序）**：关键常量（密文/密钥/换表/魔数）的唯一权威读数 = `scripts/read_views.py` 三视图（hexdump + 带字节数的 fromhex-ready hex + cstr），读到立即 `ledger.py conclude` 锁定（注明地址+长度+工具）；**禁止从终端手工转录 hex**（可信度最低的通道不能承载最关键的事实）。反编译器/IDA 的字符串与 hex 渲染只是视图——会把 `0x01`/`0x0E` 渲染成 `1`/`E` 吞掉前导 0——凡要引用渲染文本，先 `read_views.py --expect-hex "<渲染文本>"` 与真实字节对照。观测矛盾（伪码声明长度 vs 实测处理长度、同一事实两次读出不同值、`strcmp` 对任何输入都不等）→ **先怀疑读数**：任何"这段逻辑是坏的/反的"的结论，必须先排除读数错误才允许提出；同一事实第二次读出不同结果 = 熔断信号，立即停止推断、用 read_views 建立权威读数。**求逆之前先正向验证**：拿到疑似密钥/密文后，先用已知输入把完整流水线正向跑一遍（`oracle.py` / `emulate-function`）确认模型能复现已知输出，再求逆——直接求逆错了也不知道错在哪。
 
 ## 2. 快速上手（3 行）
 
@@ -175,6 +177,7 @@ export JAVA_HOME="C:/Java"
 |---|---|
 | `rpc_driver.py` | 统一入口：项目映射/key 替换/@out/环境自给 |
 | `ledger.py` | **铁律 7 机械断路器**：观察落账（同区回访强制 `--delta`）/权威结论锁定/卡点/render |
+| `read_views.py` | **铁律 8 权威读数**：三视图读字节（hexdump/fromhex-ready hex/cstr）+ `--expect-len`/`--expect-hex` 一致性检查（失败 exit 2） |
 | `launch_gui.py` | detached 拉起 Ghidra GUI，可直接打开项目 |
 | `doctor.py` | 环境自检（8 项：安装/JDK/双 venv/工作区/项目/rpc 包/daemon 起停），全绿 exit 0 |
 
@@ -268,7 +271,7 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 |---|---|
 | `references/headless.md` | 要调参数、排障、理解项目缓存机制时 |
 | `references/scripting.md` | 要写自定义 Ghidra 脚本（Jython/PyGhidra 惯用法、事务、仿真模板） |
-| `references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查 |
-| `references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表 |
+| `~/.dsh/skills/re-triage/references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查（属 re-triage） |
+| `~/.dsh/skills/re-triage/references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表（属 re-triage） |
 | `references/evidence-ledger.md` | 铁律 7 执行机制：ledger.py 命令、断路器语义、台账格式（任何区域级分析前必读） |
-| `references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数） |
+| `~/.dsh/skills/ghidra-static/references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数，属 ghidra-static） |

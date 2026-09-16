@@ -30,7 +30,7 @@ python "$SK/rpc_driver.py" ensure /path/to/sample
 python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json" triage /path/to/sample
 ```
 
-产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python/UPX）。参数细节见 ghidra-core §5 能力清单。
+产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python）与 **`packer` 壳判定块**（节名 / 文件内 `UPX!` magic / 结构特征三信号交叉，verdict ∈ upx / packed-unknown / none）。`lang_hints.upx` 只是兼容字段——判壳以 `packer` 块为准，且 **verdict=none 不排除壳**（节名可改、magic 可抹）；有疑点按 advice 人工复核。参数细节见 ghidra-core §5 能力清单。
 
 2. **手工补充**（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
 3. **下判据 → 选路线**（见下「语言/平台路由」与「路线决策」）。
@@ -70,7 +70,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数 |
 | `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
-| UPX 节名 | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
+| UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
 | 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
 | APK 里的 .so | 优先选 x86_64 版本，Ghidra 反编译质量最好；JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
 | WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
