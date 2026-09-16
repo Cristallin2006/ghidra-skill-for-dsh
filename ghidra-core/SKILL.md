@@ -54,9 +54,9 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 4. **Triage 硬门**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。
 5. **确认即标注**：搞清一个函数立即 `rename-function` 改成语义名 + `set-comment --type plate` 写 plate comment（地址/作用/依据）。结论必须带地址和可复现命令。daemon 写操作即刻生效并自动存盘。
 6. **时间盒**：静态深挖 ~15 分钟无关键路径 → 转动态（Frida/GDB/Qiling/angr，选型见 ghidra-static `references/ctf-patterns.md` §6）；同一路径失败 2 次 → 换工具，禁止空转。
-7. **死循环断路器**：循环签名 = 第二次回到同一字节区域/同一假设继续分析。一旦命中立即停手，显式声明卡点（"我在 X 上卡住，已试 A、B"），然后升级：换工具 / 转动态 / 问用户——禁止第三种方式重试同一路径。字节只能通过工具解读（反汇编、反编译、脚本输出）；肉眼直读 hex 仅用于验证工具输出，预算 ≤2 次。packed/加密字节在信息论上是噪声，内容级死磕一律禁止——先脱壳（re-unpack）或仿真（`emulate-function`）。
+7. **死循环断路器（机械触发，不靠自觉）**：循环签名 = 第二次回到同一字节区域/同一假设继续分析。执行载体是 `scripts/ledger.py`：每个区域级观察 MUST 走 `ledger.py observe` 落账——同一区域第二次 observe 时脚本**拒绝入账（exit 2）**，除非 `--delta` 回答"这次观测和上次差在哪"；答不出 = 断路器触发，按脚本打印的菜单升级：换工具 / 转动态 / 问用户，并用 `ledger.py stuck` 留痕——禁止换第 3 种方式重试同一路径。字节只能通过工具解读（反汇编、反编译、脚本输出）；肉眼/裸 hex 仅用于验证工具输出，脚本对同一区域只放行 2 次，第 3 次直接拒绝。packed/加密字节在信息论上是噪声，内容级死磕一律禁止——先脱壳（re-unpack）或仿真（`emulate-function`）。
 
-铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（原地打转立即停手）——先命中哪条执行哪条。铁律 7 的执行载体是**证据台账**（`references/evidence-ledger.md`）：每个样本一份 `<ws>/out/<名>.ledger.md`（权威结论锁定 / 已踏勘区域 / 卡点记录），先查后析、写入即锁定、推翻留痕——没有台账的熔断靠不住。
+铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（ledger.py 机械拦截原地打转）——先命中哪条执行哪条。台账 = `<ws>/out/<名>.ledger.jsonl`（机器真相，append-only）+ 每次入账自动重建的 `<名>.ledger.md`（人读视图）：权威结论写入即锁定（同 id 覆盖必须 `--overturn`+新证据）、先查后析（`ledger.py query`）、推翻留痕——机制细节见 `references/evidence-ledger.md`。
 
 ## 2. 快速上手（3 行）
 
@@ -174,6 +174,7 @@ export JAVA_HOME="C:/Java"
 | 脚本 | 用途 |
 |---|---|
 | `rpc_driver.py` | 统一入口：项目映射/key 替换/@out/环境自给 |
+| `ledger.py` | **铁律 7 机械断路器**：观察落账（同区回访强制 `--delta`）/权威结论锁定/卡点/render |
 | `launch_gui.py` | detached 拉起 Ghidra GUI，可直接打开项目 |
 | `doctor.py` | 环境自检（8 项：安装/JDK/双 venv/工作区/项目/rpc 包/daemon 起停），全绿 exit 0 |
 
@@ -269,4 +270,5 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 | `references/scripting.md` | 要写自定义 Ghidra 脚本（Jython/PyGhidra 惯用法、事务、仿真模板） |
 | `references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查 |
 | `references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表 |
+| `references/evidence-ledger.md` | 铁律 7 执行机制：ledger.py 命令、断路器语义、台账格式（任何区域级分析前必读） |
 | `references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数） |

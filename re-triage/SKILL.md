@@ -10,7 +10,7 @@ whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面
 
 > **铁律 4（Triage 硬门）**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。（全文见 ghidra-core §1）
 >
-> **证据台账**：开工先建 `<ws>/out/<样本名>.ledger.md`；新会话接手旧样本时先读台账再动手。模板与规则见 ghidra-core `references/evidence-ledger.md`。
+> **证据台账**：开工即落账——每次区域观察走 ghidra-core `scripts/ledger.py observe`（首次入账自动建账）；新会话接手旧样本先 `ledger.py status` + 读 `<ws>/out/<样本名>.ledger.md` 再动手。机制见 ghidra-core `references/evidence-ledger.md`。
 
 ## 路径约定
 

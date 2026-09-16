@@ -8,7 +8,7 @@ whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导
 
 前置：re-triage（检出壳才来这里）／后继：回到 re-triage（脱壳产物当新样本重新分诊）／内容分析 → ghidra-static／命令细节 → ghidra-core
 
-> **断路器纪律**：packed/加密字节在信息论上是噪声——禁止对其做内容级肉眼/脚本分析；同一区域第二次回访 = 触发断路器（见 ghidra-core 铁律 7）。
+> **断路器纪律**：packed/加密字节在信息论上是噪声——禁止对其做内容级肉眼/脚本分析；同一区域第二次回访会被 ghidra-core `scripts/ledger.py observe` 拦截（强制 `--delta`，答不出必须升级工具或问人，见 ghidra-core 铁律 7）。
 
 ## 路径约定
 

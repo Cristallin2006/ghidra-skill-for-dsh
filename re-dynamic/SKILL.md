@@ -24,7 +24,7 @@ wsl -d Ubuntu -- /mnt/c/.../sample          # ELF（含加壳判断后的产物�
 ./sample.exe                                 # PE 本机直接跑
 ```
 
-来源不明/疑似恶意的样本先评估再跑（快照 VM 更佳）；程序等输入就给输入，看输出猜结构。**观察到的每一个行为事实都回写台账**（ghidra-core references/evidence-ledger.md）。
+来源不明/疑似恶意的样本先评估再跑（快照 VM 更佳）；程序等输入就给输入，看输出猜结构。**观察到的每一个行为事实都用 ghidra-core `scripts/ledger.py observe` 回写台账**（机制见 ghidra-core references/evidence-ledger.md）。
 
 ## 2. 函数级 Oracle（oracle.py）
 

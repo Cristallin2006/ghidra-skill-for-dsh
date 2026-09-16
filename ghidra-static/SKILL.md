@@ -10,7 +10,7 @@ whenToUse: 已知样本类型后的静态分析：反编译指定函数、追数
 
 > **铁律 5（确认即标注）**：搞清一个函数立即改成语义名 + 写 plate comment（地址/作用/依据）。结论必须带地址和可复现命令。（全文见 ghidra-core §1）
 >
-> **证据台账**：本 skill 全程维护 `<ws>/out/<样本名>.ledger.md`——先查后析（命中已踏勘区域 = 熔断）、权威结论写入即锁定、卡点必记。模板与规则见 ghidra-core `references/evidence-ledger.md`。
+> **证据台账**：本 skill 全程经 ghidra-core `scripts/ledger.py` 落账——`query` 先查后析、`observe` 观察入账（同区第二次回访被脚本强制要求 `--delta`，答不出 = 断路器）、`conclude` 权威结论写入即锁定、`stuck` 卡点必记。机制见 ghidra-core `references/evidence-ledger.md`。
 
 ## 路径约定
 

@@ -1,0 +1,396 @@
+#!/usr/bin/env python
+"""ledger.py - mechanical circuit breaker for Iron Rule 7 (evidence ledger).
+
+Host-side tool (any Python 3.8+, stdlib only; NOT through driver.py exec).
+
+Iron Rule 7 as text says "second visit to the same byte region = stop".
+Text does not fire by itself, so this script is the GATE: every region-level
+observation MUST be booked through `observe`. The second time a region is
+observed, the entry is REJECTED (exit 2) unless `--delta` answers
+"what is different from last time". No answer = escalate, do not retry.
+
+Storage (per binary, keyed by path; sha256-16 recorded inside):
+  <ws>/out/<name>.ledger.jsonl   machine truth, append-only
+  <ws>/out/<name>.ledger.md      rendered view, auto-regenerated on writes
+
+Commands:
+  query    <binary> [--region R]                       look before you analyze
+  observe  <binary> --region R --tool T --note N [--delta D]
+  conclude <binary> --conclusion C --address A --evidence E [--id K] [--overturn]
+  stuck    <binary> --at R --tried "A,B" --escalate TARGET
+  status   <binary>
+  render   <binary>
+
+Region syntax: 0x1000-0x1100 | 0x1000+0x40 | 0x1000 (point) | check_flag
+(name) | name:literal (force name, for names that look like hex).
+Exit codes: 0 ok, 1 usage/io error, 2 circuit breaker fired (read stdout).
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# dsh/Git Bash capture decodes stdout as UTF-8; a cp936 console would otherwise
+# emit mojibake for the breaker block.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream.encoding and _stream.encoding.lower() not in ("utf-8", "utf8"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+HOME = Path(os.path.expanduser("~"))
+WS_OUT = HOME / ".dsh" / "ghidra-workspace" / "out"
+
+# Iron Rule 7: naked-eye hex reading is only for verifying tool output.
+# The budget is mechanical: per region, per binary, the 3rd booking is refused.
+NAKED_EYE = {"naked-eye", "raw-hex", "hex", "xxd", "hexdump", "hd", "肉眼"}
+NAKED_EYE_BUDGET = 2
+
+ESCALATION_MENU = """\
+答不出 -> 禁止换第 3 种方式重试同一路径，必须升级其一：
+  · 换工具层级: read-bytes -> disassemble -> decompile -> pcode / search-decompiled
+  · 疑似 packed/加密 -> re-unpack（upx -d / upx_repair.py / unpacker）
+  · 静态卡住 -> re-dynamic（跑起来看 / oracle.py / emulate-function）
+  · 都不行 -> ledger.py stuck <binary> --at <区域> --tried "A,B" --escalate <去向>，然后问用户"""
+
+
+def sha16(binary: Path) -> str:
+    h = hashlib.sha256()
+    with binary.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+def ledger_paths(binary: Path) -> tuple[Path, Path]:
+    WS_OUT.mkdir(parents=True, exist_ok=True)
+    return (WS_OUT / (binary.name + ".ledger.jsonl"),
+            WS_OUT / (binary.name + ".ledger.md"))
+
+
+def load_entries(jsonl: Path) -> list[dict]:
+    if not jsonl.is_file():
+        return []
+    out = []
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return out
+
+
+def append_entry(jsonl: Path, entry: dict) -> None:
+    with jsonl.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def parse_region(text: str):
+    """-> ("range", start, end_inclusive) | ("name", str)"""
+    t = text.strip()
+    if t.lower().startswith("name:"):
+        return ("name", t[5:])
+
+    def hexint(s: str) -> int:
+        s = s.strip().lower()
+        return int(s[2:] if s.startswith("0x") else s, 16)
+
+    low = t.lower()
+    try:
+        if "-" in low and not low.startswith("-"):
+            a, b = low.split("-", 1)
+            start, end = hexint(a), hexint(b)
+            return ("range", min(start, end), max(start, end))
+        if "+" in low:
+            a, b = low.split("+", 1)
+            start = hexint(a)
+            return ("range", start, start + hexint(b) - 1)
+        if low.startswith("0x") or (low and all(c in "0123456789abcdef" for c in low)):
+            v = hexint(low)
+            return ("range", v, v)
+    except ValueError:
+        pass
+    return ("name", t)
+
+
+def regions_hit(a, b) -> bool:
+    if a[0] == "range" and b[0] == "range":
+        return a[1] <= b[2] and b[1] <= a[2]
+    if a[0] == "name" and b[0] == "name":
+        return a[1] == b[1]
+    return False
+
+
+def now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fmt_obs(i: int, e: dict) -> str:
+    delta = f"  delta=\"{e['delta']}\"" if e.get("delta") else ""
+    return f"[{i}] {e['ts']}  tool={e['tool']}  note=\"{e['note']}\"{delta}"
+
+
+def breaker_block(region: str, priors: list[dict], reason: str) -> None:
+    print(f"[断路器 · 铁律7] 区域 \"{region}\" 第 {len(priors) + 1} 次回访 —— {reason}")
+    print("──── 已有观察 ────")
+    for i, e in enumerate(priors, 1):
+        print(fmt_obs(i, e))
+    print("──── 强制问题 ────")
+    print("这次观测和上次差在哪？")
+    print("答得出 -> 重新执行本命令并加: --delta \"具体差异（区别于上面每一条）\"")
+    print(ESCALATION_MENU)
+
+
+def require_binary(args) -> Path:
+    binary = Path(args.binary)
+    if not binary.is_file():
+        print(json.dumps({"ok": False, "error": f"binary not found: {binary}"},
+                         ensure_ascii=False))
+        sys.exit(1)
+    return binary
+
+
+def auto_render(binary: Path) -> None:
+    try:
+        render(binary)
+    except Exception:
+        pass  # never let rendering break a booking
+
+
+def cmd_observe(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    region = parse_region(args.region)
+    priors = [e for e in entries if e.get("type") == "observe"
+              and regions_hit(parse_region(e.get("region", "")), region)]
+    tool = args.tool.strip()
+
+    if tool.lower() in NAKED_EYE:
+        naked = [e for e in priors if e["tool"].lower() in NAKED_EYE]
+        if len(naked) >= NAKED_EYE_BUDGET:
+            breaker_block(args.region, priors,
+                          f"肉眼/裸 hex 预算已用完（{NAKED_EYE_BUDGET} 次/区域）——"
+                          "字节只能通过工具解读，肉眼仅用于验证工具输出")
+            return 2
+
+    if priors:
+        delta = (args.delta or "").strip()
+        if not delta or delta == args.note.strip():
+            breaker_block(args.region, priors,
+                          "缺少 --delta" if not delta else "--delta 与 --note 相同，不是差异")
+            return 2
+
+    entry = {"type": "observe", "ts": now(), "sha16": sha16(binary),
+             "region": args.region.strip(), "tool": tool,
+             "note": args.note.strip(), "visit": len(priors) + 1}
+    if args.delta:
+        entry["delta"] = args.delta.strip()
+    append_entry(jsonl, entry)
+    auto_render(binary)
+
+    out = {"ok": True, "booked": True, "visit": entry["visit"],
+           "ledger": str(jsonl)}
+    if entry["visit"] >= 3:
+        out["warning"] = (f"该区域第 {entry['visit']} 次回访——若本条 delta "
+                          "仍无实质增量，立即升级工具层级（见断路器菜单）")
+    print(json.dumps(out, ensure_ascii=False))
+    return 0
+
+
+def cmd_query(args) -> int:
+    binary = require_binary(args)
+    jsonl, md = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    result = {"ok": True, "ledger": str(jsonl), "md": str(md),
+              "entries": len(entries), "observations": [], "conclusions": [],
+              "stucks": []}
+    if args.region:
+        region = parse_region(args.region)
+        result["observations"] = [
+            e for e in entries if e.get("type") == "observe"
+            and regions_hit(parse_region(e.get("region", "")), region)]
+        result["conclusions"] = [
+            e for e in entries if e.get("type") == "conclude"
+            and regions_hit(parse_region(e.get("region", "")), region)]
+        if result["observations"] or result["conclusions"]:
+            result["verdict"] = ("已踏勘——直接引用以上结论/观察；没有台账之外的"
+                                 "新证据禁止重析（observe 会被断路器拦截）")
+        else:
+            result["verdict"] = "未踏勘——可以分析，观察结果用 observe 落账"
+    else:
+        result["observations"] = [e for e in entries if e.get("type") == "observe"]
+        result["conclusions"] = [e for e in entries if e.get("type") == "conclude"]
+        result["stucks"] = [e for e in entries if e.get("type") == "stuck"]
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_conclude(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    conclusions = [e for e in entries if e.get("type") == "conclude"]
+
+    cid = args.id
+    if cid is None:
+        cid = max([e.get("id", 0) for e in conclusions], default=0) + 1
+    old = next((e for e in conclusions if e.get("id") == cid), None)
+    if old and not args.overturn:
+        print(f"[写入即锁定] 结论 #{cid} 已存在：\"{old['conclusion']}\"")
+        print("推翻它必须加 --overturn 并在 --evidence 里给出新证据（推翻留痕）。")
+        return 2
+
+    entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
+             "id": cid, "conclusion": args.conclusion.strip(),
+             "address": args.address.strip(), "region": args.address.strip(),
+             "evidence": args.evidence.strip()}
+    if old:
+        entry["overturns"] = {"conclusion": old["conclusion"],
+                              "evidence": old["evidence"], "ts": old["ts"]}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "id": cid, "locked": True,
+                      "overturned": bool(old)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_stuck(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entry = {"type": "stuck", "ts": now(), "sha16": sha16(binary),
+             "at": args.at.strip(), "tried": args.tried.strip(),
+             "escalate": args.escalate.strip()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "recorded": True,
+                      "next": entry["escalate"]}, ensure_ascii=False))
+    return 0
+
+
+def cmd_status(args) -> int:
+    binary = require_binary(args)
+    jsonl, md = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    obs = [e for e in entries if e.get("type") == "observe"]
+    hot = {}
+    for e in obs:
+        hot[e["region"]] = hot.get(e["region"], 0) + 1
+    print(json.dumps({
+        "ok": True, "ledger": str(jsonl), "md": str(md),
+        "observations": len(obs),
+        "conclusions": len([e for e in entries if e.get("type") == "conclude"]),
+        "stucks": [e for e in entries if e.get("type") == "stuck"],
+        "revisit_hotspots": {r: n for r, n in sorted(hot.items(),
+                             key=lambda kv: -kv[1]) if n >= 2},
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def render(binary: Path) -> Path:
+    jsonl, md = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    sha = entries[-1]["sha16"] if entries else sha16(binary)
+
+    latest: dict[int, dict] = {}
+    for e in entries:
+        if e.get("type") == "conclude":
+            latest[e["id"]] = e
+    obs = [e for e in entries if e.get("type") == "observe"]
+    stucks = [e for e in entries if e.get("type") == "stuck"]
+
+    by_region: dict[str, list] = {}
+    for e in obs:
+        by_region.setdefault(e["region"], []).append(e)
+
+    lines = [
+        f"# Ledger: {binary.name}（sha256 前 16: {sha}）",
+        "",
+        "<!-- 由 ledger.py render 自动生成，手工改动会被覆盖；入账走 ledger.py -->",
+        "",
+        "## 权威结论（写入即锁定）",
+        "| # | 结论 | 地址 | 证据（命令/输出要点） | 时间 |",
+        "|---|------|------|----------------------|------|",
+    ]
+    for cid in sorted(latest):
+        e = latest[cid]
+        concl = e["conclusion"]
+        if "overturns" in e:
+            concl += f"（推翻：{e['overturns']['conclusion']}）"
+        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence']} | {e['ts']} |")
+    lines += ["", "## 已踏勘区域",
+              "| 区域 | 回访次数 | 工具 | 最近观察 | 差异链 |",
+              "|------|---------|------|----------|--------|"]
+    for region, es in by_region.items():
+        tools = ", ".join(dict.fromkeys(e["tool"] for e in es))
+        deltas = " → ".join(e.get("delta", "（首访）") for e in es)
+        lines.append(f"| {region} | {len(es)} | {tools} | {es[-1]['note']} | {deltas} |")
+    lines += ["", "## 卡点记录",
+              "| 卡点 | 已试路径 | 升级去向 | 时间 |",
+              "|------|---------|----------|------|"]
+    for e in stucks:
+        lines.append(f"| {e['at']} | {e['tried']} | {e['escalate']} | {e['ts']} |")
+    lines.append("")
+    md.write_text("\n".join(lines), encoding="utf-8")
+    return md
+
+
+def cmd_render(args) -> int:
+    binary = require_binary(args)
+    md = render(binary)
+    print(json.dumps({"ok": True, "md": str(md)}, ensure_ascii=False))
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Iron Rule 7 mechanical circuit breaker")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("query", help="先查后析：分析前查台账")
+    p.add_argument("binary")
+    p.add_argument("--region")
+    p.set_defaults(fn=cmd_query)
+
+    p = sub.add_parser("observe", help="观察落账（同区回访强制 --delta）")
+    p.add_argument("binary")
+    p.add_argument("--region", required=True)
+    p.add_argument("--tool", required=True)
+    p.add_argument("--note", required=True)
+    p.add_argument("--delta")
+    p.set_defaults(fn=cmd_observe)
+
+    p = sub.add_parser("conclude", help="权威结论（写入即锁定）")
+    p.add_argument("binary")
+    p.add_argument("--conclusion", required=True)
+    p.add_argument("--address", required=True)
+    p.add_argument("--evidence", required=True)
+    p.add_argument("--id", type=int)
+    p.add_argument("--overturn", action="store_true")
+    p.set_defaults(fn=cmd_conclude)
+
+    p = sub.add_parser("stuck", help="卡点必记")
+    p.add_argument("binary")
+    p.add_argument("--at", required=True)
+    p.add_argument("--tried", required=True)
+    p.add_argument("--escalate", required=True)
+    p.set_defaults(fn=cmd_stuck)
+
+    p = sub.add_parser("status", help="台账总览 + 回访热点")
+    p.add_argument("binary")
+    p.set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("render", help="重建 .ledger.md 人读视图")
+    p.add_argument("binary")
+    p.set_defaults(fn=cmd_render)
+
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
