@@ -15,6 +15,7 @@ whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导
 ```bash
 UPX="$HOME/Desktop/src/tools/upx/upx.exe"                     # Tier A 原生 UPX
 UNP="$HOME/Desktop/src/unpacker-venv/Scripts"                 # Unpacker venv（Python 3.12, editable）
+RUP="$HOME/.dsh/skills/re-unpack/scripts"                     # 本 skill 的脱壳域脚本
 export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PATH 找原生 upx
 ```
 
@@ -55,7 +56,13 @@ Tier 术语与 doctor toolchain 节一致（A=已装轻量 / B=按需重装 / C=
 
 ## 失败阶梯（逐级时间盒，单级 ≤15 分钟）
 
-① **UPX 元数据篡改**（`upx -d` 报 not packed/header corrupted）→ 按 UPX 源码手工修 `UPX!` 魔数/`l_info`/`p_info` 头再 `upx -d`（细节见 `references/unpack-playbook.md` §UPX 修头）
+① **UPX 元数据篡改**（`upx -d` 报 not packed/CantUnpackException）→ 先跑修头脚本（节名改回 UPX0/UPX1 + 按结构偏移重写 `UPX!` 魔数，`upx -t` 做 oracle 验证）：
+
+```bash
+"$UNP/python.exe" "$RUP/upx_repair.py" <packed.exe> --write --out <fixed.exe> && "$UPX" -d <fixed.exe> -o <out>
+```
+
+脚本修不动（l_info/p_info 字段级篡改）再手工（`references/unpack-playbook.md` §UPX 修头）
 ② **unipacker / qiling 仿真脱壳**（Tier B，**均已装**）：unipacker 在 unpacker-venv（Unpacker 对 PE32 自动调）；qiling 在 WSL（`/root/re-pwn-venv`，rootfs `/root/qiling-rootfs`，注意 Unpacker 的 qiling 档要在 WSL 内手动跑，不在 Windows 侧）。若 doctor toolchain 显示缺失则**明确声明"此层不可用"**并按其 hint 装回，不要硬试。
 ③ **Ghidra 仿真解密 stub**：`emulate-function` 跑 unpack stub 后 dump（命令与用法 → ghidra-core §5；不在这里展开）
 ④ **Frida 动态 dump**：跑起来后从内存抓 OEP 镜像（工具选型 → ghidra-static `references/ctf-patterns.md` §6）

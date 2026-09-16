@@ -78,11 +78,16 @@ def run_rpc(env, gpr: Path, argv: list[str], timeout: int | None = None) -> dict
                           timeout=timeout)
     text = (proc.stdout or "").strip()
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError:
-        return {"ok": False, "error": "cli",
+        data = {"ok": False, "error": "cli",
                 "message": text or (proc.stderr or "").strip(),
                 "exit_code": proc.returncode}
+    if not data.get("ok"):
+        # Always expose the exact CLI line that failed — a bare click
+        # "Missing argument" is meaningless without it.
+        data.setdefault("cmd", cmd)
+    return data
 
 
 def emit(data: dict, out_path: str | None) -> int:
@@ -99,9 +104,10 @@ def _binary_key(resp: dict) -> str | None:
     return result.get("binary")
 
 
-def cmd_ensure(env, binary: Path, out_path) -> int:
+def ensure_binary(env, binary: Path) -> dict:
+    """Idempotent: daemon running + binary loaded. Returns the payload dict."""
     if not binary.is_file():
-        return emit({"ok": False, "error": f"binary not found: {binary}"}, out_path)
+        return {"ok": False, "error": f"binary not found: {binary}"}
     gpr = project_for(binary)
 
     status = run_rpc(env, gpr, ["status"])
@@ -111,8 +117,8 @@ def cmd_ensure(env, binary: Path, out_path) -> int:
     if not running:
         start = run_rpc(env, gpr, ["start", "--headless", "--detach"], timeout=300)
         if not start.get("ok"):
-            return emit({"ok": False, "error": "daemon start failed",
-                         "detail": start}, out_path)
+            return {"ok": False, "error": "daemon start failed",
+                    "detail": start}
         started = True
 
     listed = run_rpc(env, gpr, ["list-binaries"])
@@ -124,19 +130,28 @@ def cmd_ensure(env, binary: Path, out_path) -> int:
     if key is None:
         load = run_rpc(env, gpr, ["load", str(binary)], timeout=3600)
         if not load.get("ok"):
-            return emit({"ok": False, "error": "load failed", "detail": load},
-                        out_path)
+            hint = ""
+            if ".dsh" in str(binary) or str(binary).startswith(str(HOME / ".dsh")):
+                hint = (" binary lives under a dotted path element "
+                        "(~/.dsh/...) — copy it out of the dsh config tree "
+                        "before loading.")
+            return {"ok": False, "error": "load failed" + hint,
+                    "detail": load}
         key = _binary_key(load)
         loaded = True
 
-    return emit({
+    return {
         "ok": True,
         "project": str(gpr),
         "binary_key": key,
         "daemon_started": started,
         "binary_loaded": loaded,
         "analysis_complete": True,
-    }, out_path)
+    }
+
+
+def cmd_ensure(env, binary: Path, out_path) -> int:
+    return emit(ensure_binary(env, binary), out_path)
 
 
 def main(argv: list[str]) -> int:
@@ -185,6 +200,18 @@ def main(argv: list[str]) -> int:
 
     listed = run_rpc(env, gpr, ["list-binaries"])
     bins = (listed.get("result") or {}).get("binaries", []) or []
+    known = any(b.get("short_name") == binary.name
+                or binary.name in b.get("name", "") for b in bins)
+    if not listed.get("ok") or not known:
+        # Daemon down or binary never loaded: auto-ensure instead of dying
+        # downstream with click's bare "Missing argument".
+        ensured = ensure_binary(env, binary)
+        if not ensured.get("ok"):
+            return emit({"ok": False,
+                         "error": f"auto-ensure failed before '{sub}'",
+                         "detail": ensured}, out_path)
+        listed = run_rpc(env, gpr, ["list-binaries"])
+        bins = (listed.get("result") or {}).get("binaries", []) or []
 
     def map_key(token):
         """Resolve a binary reference (key/name/short name/file path) to the

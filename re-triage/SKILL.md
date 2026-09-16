@@ -9,6 +9,8 @@ whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面
 前置：无（本 skill 是逆向工作流入口）／后继：检出壳 → `~/.dsh/skills/re-unpack`；判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`
 
 > **铁律 4（Triage 硬门）**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。（全文见 ghidra-core §1）
+>
+> **证据台账**：开工先建 `<ws>/out/<样本名>.ledger.md`；新会话接手旧样本时先读台账再动手。模板与规则见 ghidra-core `references/evidence-ledger.md`。
 
 ## 路径约定
 
@@ -43,6 +45,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 
 - ③ 读懂逻辑/提取算法 → `ghidra-static`（Recon→Analysis→标注/patch，命令见 ghidra-core）
 - ③ 找漏洞 → `vuln-audit`（按 checklist 逐项排查，命中项回 ghidra-static 深挖确认）
+- ③ 静态卡住/要验证猜想/想先跑起来看 → `re-dynamic`（直接运行、函数级 Oracle、Frida/gdb/angr 入口）
 - 检出壳 → `re-unpack`（脱壳+验证）→ 脱壳产物回 ① 重新分诊
 - ④ 交付纪律（证据带地址+复现命令、产物 SHA256、禁止无证据否定结论）在 `ghidra-static` §交付
 - 任何阶段的命令细节 → `ghidra-core`；静态 15 分钟无关键路径 / 同一路径失败 2 次 → 转动态或换工具（铁律 6，全文见 ghidra-core §1）
@@ -56,7 +59,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | 有壳（UPX 节名/高熵/导入表异常干净） | → **re-unpack**（检出壳 = 唯一的下一步；脱壳产物回本表重新分诊）。**检出壳后 MUST NOT 对 packed 字节做任何内容分析（肉眼或脚本）——那是噪声** |
 | .NET（mscoree/_CorExeMain） | **离开 Ghidra**：dnSpyEx + de4dot（例外：NativeAOT/IL2CPP 是 native，留下） |
 | PyInstaller/Pyarmor | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc |
-| 静态 15 分钟无关键路径 | 转动态（Frida/GDB/Qiling/angr，选型见 ghidra-static 的 references/ctf-patterns.md §6） |
+| 静态 15 分钟无关键路径 | → **re-dynamic**（跑起来看/函数级 Oracle/动态插桩入口） |
 | 同一路径失败 2 次 | 换工具，禁止空转 |
 
 ## 语言/平台路由（识别到就换打法，别硬上通用流程）

@@ -28,13 +28,17 @@ ghidra-static/   # 场景 3：深挖它——反编译/xref/标注/patch/交付
 vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
 ├── SKILL.md             # 审计流程、可达性优先纪律
 └── references/          # vuln-patterns.md（8 类漏洞模式：信号/命令/判定/误报）
+
+re-dynamic/      # 场景 5：跑起来看——直接运行/函数级 Oracle/动态插桩入口
+├── SKILL.md             # 先跑起来看纪律、oracle.py 用法与边界、升级阶梯
+└── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
 ```
 
-边界规则：代码只在 ghidra-core；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。
+边界规则：执行代码在 ghidra-core（脱壳/动态域脚本归 re-unpack/re-dynamic 自管）；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。
 
 ## 安装
 
-1. 五个目录全部拷到 `~/.dsh/skills/`：`ghidra-core`、`re-triage`、`re-unpack`、`ghidra-static`、`vuln-audit`
+1. 六个目录全部拷到 `~/.dsh/skills/`：`ghidra-core`、`re-triage`、`re-unpack`、`ghidra-static`、`vuln-audit`、`re-dynamic`
 2. 建引擎 venv（Python ≥ 3.11）并 editable 安装引擎：
    ```bash
    python3.12 -m venv ~/Desktop/src/ghidra-bridge/ghidra-rpc-venv
@@ -70,7 +74,7 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 ## 设计要点
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；`load`（大文件导入分析）和 `version-track`（全函数关联）是仅有的长任务，用 run_in_background + `@out` 落盘
-- **1+4 拆分**：执行（core）与方法论（triage/static/audit）解耦，场景 skill 零代码
+- **1+5 拆分**：执行（core）与方法论（triage/unpack/static/audit/dynamic）解耦，场景 skill 零代码
 - **Triage 硬门**：未记录 imports + 语言/壳判定前不深挖；干净导入表触发动态加载警告
 - **确认即标注**：函数搞清立即 rename + plate comment，结论必须带地址与可复现命令
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做。详见 ghidra-core/SKILL.md §8
