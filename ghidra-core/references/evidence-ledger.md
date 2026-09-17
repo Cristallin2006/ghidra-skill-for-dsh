@@ -21,13 +21,15 @@ python "$LEDGER" query <binary> --region 0x140001000-0x140001060
 # 观察落账：每个区域级观察（反编译/反汇编/读字节/搜索命中）都必须入账
 python "$LEDGER" observe <binary> --region <区间|函数名> --tool <工具> --note "看到了什么"
 
-# 权威结论：写入即锁定
+# 权威结论：写入即锁定；必须标注读数来源与独立性（铁律 10）
 python "$LEDGER" conclude <binary> --conclusion "check_flag 是 XOR 0x37 比较" \
-  --address 0x140001064 --evidence "decompile + read-bytes .rodata"
+  --address 0x140001064 --evidence "decompile + read-bytes .rodata" \
+  --source read_views --independent yes --quote "83 f0 37 ..."
 
 # 推翻留痕：同 id 覆盖必须 --overturn + 新证据（旧结论自动留在 JSONL 里）
 python "$LEDGER" conclude <binary> --id 1 --overturn --conclusion "其实是 XOR 0x38" \
-  --address 0x140001064 --evidence "oracle.py 实测"
+  --address 0x140001064 --evidence "oracle.py 实测" \
+  --source runtime-oracle --independent yes
 
 # 卡点必记：断路器触发后，升级前先把「卡在哪、试过什么」留下来
 python "$LEDGER" stuck <binary> --at 0x140002000-0x140002040 \
@@ -63,6 +65,18 @@ python "$LEDGER" render <binary>
 ```
 
 exit 2 不是错误，是门。**正确处理是回答强制问题或升级，不是换措辞重试。**
+
+## 结论来源标注（铁律 10，conclude 强制字段）
+
+每条结论必须交代「读数是谁的、有没有第二来源」——encode 复盘的错误结论若被强制标注
+`source=self-script, independent=no`，在交付前就显眼到无法忽略：
+
+| 字段 | 取值 | 语义 |
+|------|------|------|
+| `--source` | `read_views` / `runtime-oracle` / `runtime-gdb` / `decompiler-render` / `self-script` / `manual` | 读数通道。可信度从高到低；`decompiler-render` 与 `manual` 承载关键常量前应先过 read_views 对照（铁律 8） |
+| `--harness` | 脚本路径+版本 | `source=self-script` 时**必填**；未通过已知答案自检的 harness 输出是零证据 |
+| `--independent` | `yes` / `no` | 是否有第二独立来源（静态常量/第二输入/已知明文）交叉印证。`no` → render 标 **⚠UNVERIFIED** 且入账时打印警告——禁止原样交付 |
+| `--quote` | 工具输出原文 | 结论所依赖的 verbatim 输出；引不出原文的结论按未验证假设对待 |
 
 ## 五条规则（与机制一一对应）
 

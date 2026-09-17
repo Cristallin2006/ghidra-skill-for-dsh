@@ -13,6 +13,8 @@ whenToUse: 已知样本类型后的静态分析：反编译指定函数、追数
 > **证据台账**：本 skill 全程经 ghidra-core `scripts/ledger.py` 落账——`query` 先查后析、`observe` 观察入账（同区第二次回访被脚本强制要求 `--delta`，答不出 = 断路器）、`conclude` 权威结论写入即锁定、`stuck` 卡点必记。机制见 ghidra-core `references/evidence-ledger.md`。
 >
 > **铁律 8（读数纪律）**：关键常量用 ghidra-core `scripts/read_views.py` 三视图取唯一权威读数并 `conclude` 锁定；反编译器的 hex/字符串渲染只是视图（会吞前导 0），引用前先 `--expect-hex` 对照；观测矛盾先怀疑读数，不怀疑程序；求逆前先正向跑通流水线。（全文见 ghidra-core §1）
+>
+> **铁律 9/10（缓冲区归属 + 验证独立性）**：imm-store 拼栈上常量必须按 disp 区间归属变量并 `--expect-len` 核对声明长度；求逆前 MUST 过 ghidra-core `scripts/crypto_sanity.py check`，求逆后 MUST 过 `check-result`，exit 2 = 读数可疑禁止求逆。`conclude` 强制 `--source`/`--independent`——patch 态/自写 harness/单一来源的结论标 ⚠UNVERIFIED，禁止原样交付；宣布「不可满足」前必须先正向复现已知输出。（全文见 ghidra-core §1，patch 态细则见 re-dynamic §4）
 
 ## 路径约定
 

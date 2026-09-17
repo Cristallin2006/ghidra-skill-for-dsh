@@ -16,10 +16,20 @@ Storage (per binary, keyed by path; sha256-16 recorded inside):
 Commands:
   query    <binary> [--region R]                       look before you analyze
   observe  <binary> --region R --tool T --note N [--delta D]
-  conclude <binary> --conclusion C --address A --evidence E [--id K] [--overturn]
+  conclude <binary> --conclusion C --address A --evidence E \
+           --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn]
   stuck    <binary> --at R --tried "A,B" --escalate TARGET
   status   <binary>
   render   <binary>
+
+Conclusion provenance (mandatory, Iron Rule 10): every conclusion must name
+WHERE its reading came from (--source: read_views | self-script |
+decompiler-render | runtime-gdb | runtime-oracle | manual) and whether a
+second, independent source cross-confirms it (--independent yes|no).
+self-script requires --harness <script path> (a harness that has not passed
+its known-answer self-check is zero evidence). --quote attaches the verbatim
+tool output the conclusion rests on. independent=no conclusions render as
+UNVERIFIED and must not be delivered as-is.
 
 Region syntax: 0x1000-0x1100 | 0x1000+0x40 | 0x1000 (point) | check_flag
 (name) | name:literal (force name, for names that look like hex).
@@ -246,17 +256,33 @@ def cmd_conclude(args) -> int:
         print("推翻它必须加 --overturn 并在 --evidence 里给出新证据（推翻留痕）。")
         return 2
 
+    if args.source == "self-script" and not args.harness:
+        print(json.dumps({"ok": False,
+                          "error": "source=self-script 必须加 --harness <脚本路径>；"
+                                   "未通过已知答案自检的 harness 输出是零证据（铁律 10）"},
+                         ensure_ascii=False))
+        return 1
+
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
              "id": cid, "conclusion": args.conclusion.strip(),
              "address": args.address.strip(), "region": args.address.strip(),
-             "evidence": args.evidence.strip()}
+             "evidence": args.evidence.strip(),
+             "source": args.source, "independent": args.independent}
+    if args.harness:
+        entry["harness"] = args.harness.strip()
+    if args.quote:
+        entry["quote"] = args.quote.strip()
     if old:
         entry["overturns"] = {"conclusion": old["conclusion"],
                               "evidence": old["evidence"], "ts": old["ts"]}
     append_entry(jsonl, entry)
     auto_render(binary)
-    print(json.dumps({"ok": True, "id": cid, "locked": True,
-                      "overturned": bool(old)}, ensure_ascii=False))
+    out = {"ok": True, "id": cid, "locked": True, "overturned": bool(old)}
+    if args.independent == "no":
+        out["warning"] = ("该结论无独立来源交叉印证——render 中标记 UNVERIFIED；"
+                          "交付前必须补第二来源（静态常量 / 第二输入 / 已知明文）"
+                          "或在交付物中显式声明「自我一致，未独立验证」")
+    print(json.dumps(out, ensure_ascii=False))
     return 0
 
 
@@ -313,16 +339,23 @@ def render(binary: Path) -> Path:
         "",
         "<!-- 由 ledger.py render 自动生成，手工改动会被覆盖；入账走 ledger.py -->",
         "",
-        "## 权威结论（写入即锁定）",
-        "| # | 结论 | 地址 | 证据（命令/输出要点） | 时间 |",
-        "|---|------|------|----------------------|------|",
+        "## 权威结论（写入即锁定；⚠UNVERIFIED = 无独立来源，禁止原样交付）",
+        "| # | 结论 | 地址 | 证据（命令/输出要点） | 来源 | 独立验证 | 时间 |",
+        "|---|------|------|----------------------|------|---------|------|",
     ]
     for cid in sorted(latest):
         e = latest[cid]
         concl = e["conclusion"]
         if "overturns" in e:
             concl += f"（推翻：{e['overturns']['conclusion']}）"
-        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence']} | {e['ts']} |")
+        source = e.get("source", "—")
+        if e.get("harness"):
+            source += f"({e['harness']})"
+        indep = e.get("independent", "—")
+        if indep == "no":
+            concl = "⚠UNVERIFIED " + concl
+        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence']} "
+                     f"| {source} | {indep} | {e['ts']} |")
     lines += ["", "## 已踏勘区域",
               "| 区域 | 回访次数 | 工具 | 最近观察 | 差异链 |",
               "|------|---------|------|----------|--------|"]
@@ -364,11 +397,19 @@ def main() -> int:
     p.add_argument("--delta")
     p.set_defaults(fn=cmd_observe)
 
-    p = sub.add_parser("conclude", help="权威结论（写入即锁定）")
+    p = sub.add_parser("conclude", help="权威结论（写入即锁定；必须标注来源与独立性）")
     p.add_argument("binary")
     p.add_argument("--conclusion", required=True)
     p.add_argument("--address", required=True)
     p.add_argument("--evidence", required=True)
+    p.add_argument("--source", required=True,
+                   choices=["read_views", "self-script", "decompiler-render",
+                            "runtime-gdb", "runtime-oracle", "manual"],
+                   help="读数来源；self-script 必须同时给 --harness")
+    p.add_argument("--independent", required=True, choices=["yes", "no"],
+                   help="是否有第二独立来源交叉印证；no → render 标 UNVERIFIED")
+    p.add_argument("--harness", help="source=self-script 时必填：脚本路径+版本")
+    p.add_argument("--quote", help="结论所依据的工具输出原文（verbatim）")
     p.add_argument("--id", type=int)
     p.add_argument("--overturn", action="store_true")
     p.set_defaults(fn=cmd_conclude)

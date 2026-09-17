@@ -9,7 +9,7 @@ whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障�
 唯一的代码与命令知识层。场景 skill（re-triage / ghidra-static / vuln-audit）只含方法论，具体命令一律回本文件查。
 
 - 场景路由：未知样本分诊 → `~/.dsh/skills/re-triage`；脱壳与验证 → `~/.dsh/skills/re-unpack`；静态深挖/patch/交付 → `~/.dsh/skills/ghidra-static`；漏洞模式排查 → `~/.dsh/skills/vuln-audit`
-- 本 skill 内容：§0 环境 / §1 七条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
+- 本 skill 内容：§0 环境 / §1 十条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
 - engine 内部补丁细节不在本文件：见 `engine/VENDOR.md`
 
 ## 0. 环境（本机已配好）
@@ -46,7 +46,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个。**2026-09-15 起执行引擎迁移为 ghidra-rpc 常驻 daemon，这 25 个脚本冻结为 legacy 备查**（见 §5 第 3 层），`driver.py` 保留为 daemon 挂掉时的后路。
 
-## 1. 八条铁律（先读这个再动手）
+## 1. 十条铁律（先读这个再动手）
 
 1. **开工先 ensure；批量场景用批量工具**：daemon 温热后单次命令 ~0.2s，"一个函数一次调用"不再是罪。但全量反编译/全文搜索仍优先 `decompile-all` / `search-decompiled` 这类服务端批量工具——别 for 循环 1000 次单条 `decompile`（每条都要序列化过锁）。
 2. **导入分析一次做足**：`rpc_driver.py ensure` 的 load 只做一次全量分析；之后所有查询/写操作都打在同一个已分析程序上，不会重跑分析。
@@ -59,6 +59,8 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（ledger.py 机械拦截原地打转）——先命中哪条执行哪条。台账 = `<ws>/out/<名>.ledger.jsonl`（机器真相，append-only）+ 每次入账自动重建的 `<名>.ledger.md`（人读视图）：权威结论写入即锁定（同 id 覆盖必须 `--overturn`+新证据）、先查后析（`ledger.py query`）、推翻留痕——机制细节见 `references/evidence-ledger.md`。
 
 8. **读数纪律（第一嫌疑人是读数，不是程序）**：关键常量（密文/密钥/换表/魔数）的唯一权威读数 = `scripts/read_views.py` 三视图（hexdump + 带字节数的 fromhex-ready hex + cstr），读到立即 `ledger.py conclude` 锁定（注明地址+长度+工具）；**禁止从终端手工转录 hex**（可信度最低的通道不能承载最关键的事实）。反编译器/IDA 的字符串与 hex 渲染只是视图——会把 `0x01`/`0x0E` 渲染成 `1`/`E` 吞掉前导 0——凡要引用渲染文本，先 `read_views.py --expect-hex "<渲染文本>"` 与真实字节对照。观测矛盾（伪码声明长度 vs 实测处理长度、同一事实两次读出不同值、`strcmp` 对任何输入都不等）→ **先怀疑读数**：任何"这段逻辑是坏的/反的"的结论，必须先排除读数错误才允许提出；同一事实第二次读出不同结果 = 熔断信号，立即停止推断、用 read_views 建立权威读数。**求逆之前先正向验证**：拿到疑似密钥/密文后，先用已知输入把完整流水线正向跑一遍（`oracle.py` / `emulate-function`）确认模型能复现已知输出，再求逆——直接求逆错了也不知道错在哪。
+9. **缓冲区归属（字节是谁的）**：从 `MOV [EBP+disp], imm` 序列重建栈上字符串时，必须**按 disp 区间归属变量**，禁止按指令出现顺序拼接——相邻变量的写入区间相接（`end_A + 1 == start_B`）时极易把别人的字节拼进自己的常量（encode 复盘 E1：28 字节密文被读成 49 字符）。拼接结果 MUST `read_views.py --expect-len` 与该变量声明长度核对。任何常量长度不符合其用途（hex 必须偶数、base64 必须 4 的倍数、XOR/RC4 密文必须等于明文长度）→ **以「读数可疑」中止，禁止进入求逆**。机械门 = `scripts/crypto_sanity.py`：求逆前 MUST 过 `check`，求逆后 MUST 过 `check-result`——49 字符的 base64、28≠21 的密文、不可打印的反推结果都会被它 exit 2 拦下。
+10. **验证独立性（同源验证 = 没验证）**：用自己 patch 的进程、自己写的 harness、自己算的偏移来验证自己对程序的理解，三者一致不构成任何证据（encode 复盘 E2/E3）。① **被 patch 过的运行态只能用于探索控制流，禁止用于验证数据模型**——验证数据模型要求进程未修改（或修改点与测量点无数据依赖）+ 至少一个独立来源（静态常量/第二输入/已知明文）交叉印证；被迫在 patch 后测量的结论必须 `conclude --independent no` 标注。② **自建 harness（投喂/读数脚本）在支撑结论前必须用已知答案的输入自检**；自检失败或结果不稳定 → 该 harness 全部输出作废；「偶发命中」必须复跑 ≥100 次确认可复现才算发现。③ `ledger.py conclude` 强制标注 `--source`/`--independent`（self-script 必须给 `--harness` 路径），无独立来源的结论在 render 里标 ⚠UNVERIFIED，禁止原样交付。④ **否定性结论门槛更高**：说「不可满足/程序是坏的」之前，必须先用已知输入正向复现成功（铁律 8），且结论必须能指认一个「如果它错了，结论就崩」的外部事实——指认不出就不许交付。细则见 re-dynamic §4。
 
 ## 2. 快速上手（3 行）
 
@@ -176,8 +178,9 @@ export JAVA_HOME="C:/Java"
 | 脚本 | 用途 |
 |---|---|
 | `rpc_driver.py` | 统一入口：项目映射/key 替换/@out/环境自给 |
-| `ledger.py` | **铁律 7 机械断路器**：观察落账（同区回访强制 `--delta`）/权威结论锁定/卡点/render |
+| `ledger.py` | **铁律 7 机械断路器**：观察落账（同区回访强制 `--delta`）/权威结论锁定（`conclude` 强制 `--source`/`--independent` 来源标注，无独立来源标 ⚠UNVERIFIED）/卡点/render |
 | `read_views.py` | **铁律 8 权威读数**：三视图读字节（hexdump/fromhex-ready hex/cstr）+ `--expect-len`/`--expect-hex` 一致性检查（失败 exit 2） |
+| `crypto_sanity.py` | **铁律 9 求逆闸门**：`check`（常量长度/格式合法性：hex 偶数、base64 %4、流密码等长）+ `check-result`（反推结果可打印性/格式），违规 exit 2 禁止求逆 |
 | `launch_gui.py` | detached 拉起 Ghidra GUI，可直接打开项目 |
 | `doctor.py` | 环境自检（8 项：安装/JDK/双 venv/工作区/项目/rpc 包/daemon 起停），全绿 exit 0 |
 
