@@ -14,9 +14,11 @@ whenToUse: 拿到 pcap/pcapng 要分析时；DNS 隧道、ICMP/时序/TCP flag �
 
 ```bash
 TA="$HOME/.dsh/skills/traffic-analysis/scripts"   # 本 skill 脚本（全零依赖，Python 3 stdlib）
+TS="$HOME/Desktop/src/tools/wireshark/tshark.exe" # tshark 4.6.8（7z 免安装解包；未加 PATH，用全路径）
+EC="$HOME/Desktop/src/tools/wireshark/editcap.exe" # editcap（pcapng→pcap 转换）
 ```
 
-本 skill 不依赖 tshark——`pcap_triage.py` 自研解析器保底；tshark/Wireshark/aircrack-ng/hashcat 是否可用以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core），缺失按 hint 装或绕。
+本 skill 不依赖 tshark——`pcap_triage.py` 自研解析器保底；tshark/editcap/scapy/aircrack-ng/hashcat 是否可用以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core），缺失按 hint 装或绕。
 
 ## 流程
 
@@ -28,13 +30,13 @@ TA="$HOME/.dsh/skills/traffic-analysis/scripts"   # 本 skill 脚本（全零依
 
 ```bash
 python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协议分布/包长直方图/top 会话 + 路由 hint
-tshark -r cap.pcap -q -z io,phs           # 有 tshark 时交叉验证：协议分层统计
-tshark -r cap.pcap -q -z conv,ip          # 会话/端点
+"$TS" -r cap.pcap -q -z io,phs            # 有 tshark 时交叉验证：协议分层统计
+"$TS" -r cap.pcap -q -z conv,ip           # 会话/端点
 ```
 
 - `pcap_triage.py` **exit 2 = 某协议占比 >60%**，直接跟它打印的路由 hint 走
 - **大 pcap（百万包级）**：信号载体往往藏在包数最少的协议/会话里，按包数倒序找（EHAX 2026 经验）
-- pcapng 会被 pcap_triage 拒收：`editcap -F pcap in.pcapng out.pcap` 转换后再来
+- pcapng 会被 pcap_triage 拒收：`"$EC" -F pcap in.pcapng out.pcap` 转换后再来
 
 ### 3. 路由表（按分诊发现选路）
 

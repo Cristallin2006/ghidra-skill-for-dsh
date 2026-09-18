@@ -1,5 +1,7 @@
 # WPA / TLS / SMB3 解密
 
+> 本文 `tshark` 指 SKILL.md 路径约定的 `"$TS"`（`~/Desktop/src/tools/wireshark/tshark.exe`，未加 PATH）；aircrack-ng/hashcat 在 WSL Ubuntu（`wsl -d Ubuntu -u root -- <cmd>`）。
+
 ## WPA/WEP（802.11 抓包，DefCamp 2016）
 
 确认有 eapol 四次握手（pcap_triage 的 EAPOL 启发式，或 `tshark -Y eapol` 应见 message 1–4）：

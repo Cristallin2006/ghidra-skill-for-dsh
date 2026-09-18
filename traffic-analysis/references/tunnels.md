@@ -1,5 +1,7 @@
 # 隧道与隐信道配方（DNS / ICMP / TCP flags / 时序）
 
+> 本文 `tshark` 指 SKILL.md 路径约定的 `"$TS"`（`~/Desktop/src/tools/wireshark/tshark.exe`，未加 PATH）。
+
 ## 通用检测方法论（先看这个）
 
 **任何发送方能影响的 per-packet 元数据字段都是潜在信道**：包长、TTL、IPID、TCP window、DNS QNAME 长度、包间隔。

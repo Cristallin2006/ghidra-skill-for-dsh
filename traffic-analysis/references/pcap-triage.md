@@ -1,5 +1,7 @@
 # pcap 分诊细节：修复 / 文件提取 / 凭据收割
 
+> 本文 `tshark`/`editcap` 均未加 PATH，指 SKILL.md 路径约定的 `"$TS"`/`"$EC"`（`~/Desktop/src/tools/wireshark/` 下，7z 免安装解包）。
+
 ## 0. 修复（打不开才做）
 
 magic bytes 速查（`xxd cap.pcap | head -1`）：

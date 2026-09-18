@@ -1,5 +1,7 @@
 # USB HID / 蓝牙抓包还原
 
+> 本文 `tshark` 指 SKILL.md 路径约定的 `"$TS"`（`~/Desktop/src/tools/wireshark/tshark.exe`，未加 PATH）。
+
 ## 键盘（EKOPARTY 2016 经典题型）
 
 **8 字节报告结构**：

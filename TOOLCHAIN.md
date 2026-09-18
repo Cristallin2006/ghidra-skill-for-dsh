@@ -27,6 +27,13 @@
 
 注意：angr 把 z3-solver 钉到 4.13（从 5.1 降级，angr 的硬依赖约束）——两者共存无冲突。
 
+## Windows CLI — unpacker-venv（`~/Desktop/src/unpacker-venv`，Py3.12）
+
+| 工具 | 路径 | 介绍 | 安装原因（引用方） |
+|---|---|---|---|
+| unpacker（anpa1200/Unpacker） | `Scripts/unpacker.exe` | 自动脱壳路由（UPX/PE32 仿真脱壳等，内部调度 unipacker） | re-unpack 主力；防"字节死磕"死循环的强制工具升级入口 |
+| unipacker | unpacker-venv（import，随 `unpacker[unipacker]` 装入） | PE32 仿真脱壳 | 同上；⚠ 仅 PE32，64 位 Themida 走 qiling 档 |
+
 ## Windows CLI — tools/（绿色软件）
 
 | 工具 | 路径 | 介绍 | 安装原因（引用方） |
@@ -38,6 +45,7 @@
 | de4dot-cex 4.0.0 | `~/Desktop/src/tools/de4dot/de4dot.exe` | .NET 反混淆 CLI | re-triage .NET 混淆（与 dnSpyEx 组合） |
 | DIE 3.21 | `~/Desktop/src/tools/die/die/diec.exe` | 查壳/文件识别（diec=CLI） | re-triage 手工补充查壳 |
 | x64dbg snapshot 2026-05-27 | `~/Desktop/src/tools/x64dbg/release/x64/x64dbg.exe` | Windows GUI 调试器 | ghidra-static Windows GUI crackme 动态分析 |
+| Wireshark 4.6.8（tshark/editcap/capinfos 等 CLI） | `~/Desktop/src/tools/wireshark/` | 流量分析 CLI 全家桶 | traffic-analysis；官方安装包 7z 免安装解包，免管理员；未加 PATH |
 
 ## WSL Ubuntu 24.04（`wsl -d Ubuntu`，root 直进；代理走宿主网关 `$(ip route default):7890`）
 
@@ -64,12 +72,12 @@ WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`�
 
 本域脚本（`traffic-analysis/scripts/`）**全零依赖**（Python stdlib），下列工具均为增强而非必需；可用性以 doctor.py toolchain 节为准。
 
-| 工具 | 状态 | 用途 | 安装 |
+| 工具 | 路径 | 介绍 | 安装原因 |
 |---|---|---|---|
-| tshark / editcap（Wireshark 组件） | 未装（Tier C） | 协议分层统计、`--export-objects` 文件提取、pcapng→pcap 转换 | Wireshark 安装包勾选 TShark；无它走 `pcap_triage.py` 保底 |
-| scapy | 未装（Tier B） | pcap 脚本化解析进阶备手 | `pip install scapy`（进 re-tools-venv） |
-| aircrack-ng | 未装（Tier B, WSL） | WPA 握手破解、airdecap-ng 二次分析 | WSL `apt install aircrack-ng` |
-| hashcat | 未装（Tier B, WSL） | NTLMv2（-m 5600）、WPA（-m 22000） | WSL `apt install hashcat`；GPU 场景用 Windows 官网 zip |
+| tshark / editcap 4.6.8（Wireshark 组件） | `~/Desktop/src/tools/wireshark/tshark.exe`（同目录 editcap.exe） | 协议分层统计、`--export-objects` 文件提取、pcapng→pcap 转换 | 官方安装包 7z 免安装解包（免管理员）；**未加 PATH，用全路径**；实时抓包依赖 npcap（本机已装）。无它走 `pcap_triage.py` 保底 |
+| scapy 2.7.0 | re-tools-venv（import） | pcap 脚本化解析进阶备手 | 已装 |
+| aircrack-ng | WSL `/usr/bin/aircrack-ng` | WPA 握手破解、airdecap-ng 二次分析 | WSL `apt install aircrack-ng` |
+| hashcat | WSL `/usr/bin/hashcat` | NTLMv2（-m 5600）、WPA（-m 22000） | WSL `apt install hashcat`；GPU 场景用 Windows 官网 zip |
 
 ## Android 工具链（android-re）
 
