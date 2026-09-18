@@ -28,7 +28,7 @@ ghidra-core/     # 底座：怎么执行（唯一放代码的地方）
 ├── engine/ghidra-rpc/   # vendored 引擎源码 + dsh 补丁（VENDOR.md 跟踪）
 ├── scripts/             # rpc_driver.py（统一入口）/ doctor.py / launch_gui.py
 │                        # + 三道闸门：ledger.py（断路器）/ read_views.py（权威读数）/ crypto_sanity.py（求逆闸门）
-│                        # + legacy 冻结脚本
+│                        # + legacy 冻结脚本（unreferenced_funcs.py 等经 exec-code 调用）
 └── references/          # headless.md（执行模型）、scripting.md（脚本惯用法）、evidence-ledger.md（台账机制）
                          # crypto-ident.md（加密算法识别：常量指纹/API 对照/弱点清单，铁律 9 上游）
 
@@ -38,7 +38,7 @@ re-triage/       # 场景 1：这是什么？——判文件类型/语言/壳/�
 
 re-unpack/       # 场景 2：脱壳——检出壳后的唯一下一站（脱壳+强制验证+失败阶梯）
 ├── SKILL.md             # 选型表（壳→工具 tier）、验证三件套、防死循环专节
-├── scripts/             # upx_repair.py（UPX 头篡改修复）
+├── scripts/             # upx_repair.py（UPX 头篡改修复）、pyinstaller_extract.py（PyInstaller 一条龙）
 └── references/          # unpack-playbook.md（多层壳/IAT 重建/各壳对策）
 
 ghidra-static/   # 场景 3：深挖它——反编译/xref/标注/patch/交付
@@ -54,6 +54,8 @@ vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
 re-dynamic/      # 场景 5：跑起来看——直接运行/函数级 Oracle/动态插桩入口
 ├── SKILL.md             # 先跑起来看纪律、oracle.py 用法与边界、升级阶梯
 ├── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
+│                        # frida_time_hook.py（覆写时间/随机源，概率校验→确定性 oracle）
+│                        # win_gui_drive.py（pywin32 GUI 消息驱动：Post 开窗/Send 连点）
 └── references/          # js-antidebug.md（JS 混淆分类/反调试中和模板/vm 沙箱脱 eval 链）
 
 traffic-analysis/ # 场景 6：流量里找信号——pcap 分诊/隧道/隐信道/USB HID/WiFi/TLS

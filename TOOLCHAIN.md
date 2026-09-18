@@ -87,7 +87,7 @@ WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`�
 | javac / java（JDK 25） | `C:\Program Files\Common Files\Oracle\Java\javapath\` | 反编译结果编译执行 = 执行级 oracle | 已装 |
 | uncompyle6 / decompyle3 / xdis | re-tools-venv（import） | PyInstaller pyc 反编译 | 已装 |
 | capstone / unicorn / lief | re-tools-venv（import） | 反汇编/仿真/格式解析库 | 已装 |
-| pywin32 | — | Windows GUI 消息驱动（re-dynamic） | **未装**：`pip install pywin32` |
+| pywin32 | re-tools-venv（import win32api） | Windows GUI 消息驱动（re-dynamic win_gui_drive.py：PostMessage 开窗/SendMessage 连点） | 已装 |
 | apktool / baksmali | — | 资源完整还原+回编译 / smali 回汇编 | 未装（Tier C，jadx+apkanalyzer 已覆盖主场景） |
 | frida-server（android） | — | 模拟器 Java 层 hook | 未装；版本必须与 host frida 17.18.0 严格一致 |
 

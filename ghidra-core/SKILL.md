@@ -170,6 +170,7 @@ export JAVA_HOME="C:/Java"
 | `exec-code` ◆⚠ | 逃生舱：daemon 内 exec Python 文件（预置 program/find_function/output_json；无沙箱） |
 | `export-binary` ◆ | Original File 导出 + md5 对比 |
 | `emulate-function` ◆ | EmulatorHelper P-code 仿真（寄存器/内存预置，call-depth 追踪） |
+| `exec-code` + `scripts/unreferenced_funcs.py` ◆ | 零调用方函数清单（藏 flag 的第二函数）：`python rpc_driver.py [@out] exec-code <binary> "$SK/unreferenced_funcs.py"`；`--reachable-from <root>` 做可达性过滤——daemon 下脚本参数走 `DSH_UNREF_ARGS` 环境变量（须在 ensure/启动 daemon 前导出）；排除 thunk/external/entry-export 根 |
 
 ◆ = dsh 自定义工具（`engine/ghidra-rpc/ghidra_rpc/server/tools/dsh_tools.py`）。✎ = 写操作。⚠ = 无沙箱。
 完整命令与参数：`~/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts/ghidra-rpc.exe --help`，或 `engine/ghidra-rpc/docs/` + `engine/ghidra-rpc/README.md`。

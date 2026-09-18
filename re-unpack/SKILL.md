@@ -40,6 +40,7 @@ export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PA
 | VMProtect 64 位 | `.vmp0/.vmp1` 节 | Tier B（已装）：qiling 1.4.6（WSL `~/re-pwn-venv`）+ rootfs `/root/qiling-rootfs`（x86/x8664 windows）——Unpacker 的 qiling 档在 WSL 里跑 |
 | MPRESS | `.MPRESS1/2` 节 | Tier B：unipacker |
 | 未知/自定义壳 | 熵高、节名正常但 IAT 干净 | 失败阶梯 ③④ |
+| PyInstaller（打包而非壳） | `MEI\x0c\x0b\x0a\x0b\x0e` cookie、PYZ 归档 | `python "$RUP/pyinstaller_extract.py" <sample>`（识别版本 → pyinstxtractor 解包 → 按 pyc magic 自动选 uncompyle6/decompyle3/pycdc）；`--check` 只分诊 |
 
 Tier 术语与 doctor toolchain 节一致（A=已装轻量 / B=按需重装 / C=GUI 手工）；任一工具是否已装以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core）。
 

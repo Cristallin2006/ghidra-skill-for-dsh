@@ -64,6 +64,16 @@ dump 表达式：`reg+/-0xoff:len`（寄存器相对）、`0x地址:len`（Ghidr
 ② **gdb + pwndbg**（WSL 已装）：断点单步、内存断点；`wsl -d Ubuntu -- gdb /mnt/c/.../sample`
 ③ **angr**（re-tools-venv 已装）：符号执行求输入——"什么输入能让 check 返回 1"的直接求法，路径爆炸时慎用
 
+## 3.5 两个高价值套路（五题复盘实战）
+
+**① 外部随机/时间源是输入，不是逻辑**：校验依赖 `time()`/随机数/环境时，先判它是"输入"还是"逻辑"。是输入 → **合法地构造/覆写它**，把概率型 oracle 变成确定性 oracle——且不需要 patch 任何字节，天然满足铁律 10 的验证独立性（复盘实例：snake.exe 的 4 个关键格子由 `time.time()` 播种，命中概率 1/40320；枚举 FILETIME 后 frida hook `GetSystemTimeAsFileTime` 覆写返回值，未修改的二进制自己打印 flag）。覆写模板：`scripts/frida_time_hook.py`（Windows `GetSystemTimeAsFileTime` / Linux `time`/`gettimeofday` / Java `System.currentTimeMillis`）。
+
+**② Windows GUI 消息驱动（模态对话框程序的 oracle）**：用 pywin32 驱动 GUI 程序批量试输入。实测两条铁律：
+- **打开窗口用 `PostMessageA`**：模态对话框（`DialogBoxParam`）里 `SendMessageA` 会死锁
+- **高频连点回 `SendMessageA`**：`PostMessage` 队列约 10000 条后静默丢弃（实测发 19999 次只到 12205 次）
+
+组合记忆：**打开用 Post、连点用 Send**。驱动脚本：`scripts/win_gui_drive.py`。
+
 ## 4. 验证可信度（铁律 10 细则，encode 复盘 E2/E3）
 
 **① patch 态禁区**：被 patch 过的运行态（`write-bytes`/`assemble`/调试器改字节/改寄存器/跳过长度门）
