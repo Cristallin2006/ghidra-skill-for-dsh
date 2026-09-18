@@ -71,6 +71,26 @@ WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`�
 | aircrack-ng | 未装（Tier B, WSL） | WPA 握手破解、airdecap-ng 二次分析 | WSL `apt install aircrack-ng` |
 | hashcat | 未装（Tier B, WSL） | NTLMv2（-m 5600）、WPA（-m 22000） | WSL `apt install hashcat`；GPU 场景用 Windows 官网 zip |
 
+## Android 工具链（android-re）
+
+多数零成本已装（Android SDK 自带），doctor.py toolchain 节已全部注册。
+
+| 工具 | 路径 | 用途 | 状态 |
+|---|---|---|---|
+| jadx 1.5.6 | `~/Desktop/src/tools/jadx/bin/jadx.bat` | Java 层反编译第一源（消除自写 DEX 解析器的动因） | 已装 |
+| apkanalyzer | `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin\` | 官方 smali 反汇编（带行号/局部变量），双源验证第二来源 | 已装（SDK 自带） |
+| adb | `…\platform-tools\adb.exe` | 安装/驱动/uiautomator/screencap | 已装（SDK 自带） |
+| emulator + system-image android-33 x86_64 | `…\emulator\`、`…\system-images\` | 无头真机 oracle（WHPX 加速可用） | 已装 |
+| aapt2 / apksigner / dexdump | `…\build-tools\37.0.0\` | 资源解析/重签/dexdump 验证路径 | 已装（SDK 自带） |
+| sdkmanager / avdmanager | `…\cmdline-tools\latest\bin\` | 装镜像/建 AVD（长耗时走后台） | 已装（SDK 自带） |
+| androguard 4.1.4 | `~/Desktop/src/re-tools-venv`（import） | DEX 解析 + DAD，交叉验证 | 已装 |
+| javac / java（JDK 25） | `C:\Program Files\Common Files\Oracle\Java\javapath\` | 反编译结果编译执行 = 执行级 oracle | 已装 |
+| uncompyle6 / decompyle3 / xdis | re-tools-venv（import） | PyInstaller pyc 反编译 | 已装 |
+| capstone / unicorn / lief | re-tools-venv（import） | 反汇编/仿真/格式解析库 | 已装 |
+| pywin32 | — | Windows GUI 消息驱动（re-dynamic） | **未装**：`pip install pywin32` |
+| apktool / baksmali | — | 资源完整还原+回编译 / smali 回汇编 | 未装（Tier C，jadx+apkanalyzer 已覆盖主场景） |
+| frida-server（android） | — | 模拟器 Java 层 hook | 未装；版本必须与 host frida 17.18.0 严格一致 |
+
 ## Ghidra 插件（`%APPDATA%\ghidra\ghidra_12.1.3_PUBLIC\Extensions\`，launch_gui 用真实 profile 生效）
 
 当前无新增插件。Jython 扩展（`Extensions\Jython`）是上一轮所装，保留（GUI 下可用 `@runtime Jython` 脚本）。
