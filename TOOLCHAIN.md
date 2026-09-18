@@ -60,6 +60,17 @@
 
 WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`。
 
+## traffic-analysis 域（pcap/流量分析）
+
+本域脚本（`traffic-analysis/scripts/`）**全零依赖**（Python stdlib），下列工具均为增强而非必需；可用性以 doctor.py toolchain 节为准。
+
+| 工具 | 状态 | 用途 | 安装 |
+|---|---|---|---|
+| tshark / editcap（Wireshark 组件） | 未装（Tier C） | 协议分层统计、`--export-objects` 文件提取、pcapng→pcap 转换 | Wireshark 安装包勾选 TShark；无它走 `pcap_triage.py` 保底 |
+| scapy | 未装（Tier B） | pcap 脚本化解析进阶备手 | `pip install scapy`（进 re-tools-venv） |
+| aircrack-ng | 未装（Tier B, WSL） | WPA 握手破解、airdecap-ng 二次分析 | WSL `apt install aircrack-ng` |
+| hashcat | 未装（Tier B, WSL） | NTLMv2（-m 5600）、WPA（-m 22000） | WSL `apt install hashcat`；GPU 场景用 Windows 官网 zip |
+
 ## Ghidra 插件（`%APPDATA%\ghidra\ghidra_12.1.3_PUBLIC\Extensions\`，launch_gui 用真实 profile 生效）
 
 当前无新增插件。Jython 扩展（`Extensions\Jython`）是上一轮所装，保留（GUI 下可用 `@runtime Jython` 脚本）。

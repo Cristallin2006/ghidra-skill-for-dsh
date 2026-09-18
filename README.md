@@ -20,7 +20,7 @@ Ghidra 12.x headless 自动化逆向 skill 集，适配 [dsh](https://www.npmjs.
 | 脱壳域 | packed 字节上死磕 30+ 轮 | re-unpack：upx / upx_repair.py（改头 UPX）/ unpacker + 强制验证三件套 |
 | Go stripped 识别 | 字符串扫描在 stripped Go 二进制上漏报 | triage 补 buildinfo magic（`\xff Go buildinf:`）内存字节扫描兜底，实测 Go 1.26 stripped PE 命中 |
 
-## 结构（1 底座 + 5 场景）
+## 结构（1 底座 + 6 场景）
 
 ```
 ghidra-core/     # 底座：怎么执行（唯一放代码的地方）
@@ -55,13 +55,21 @@ re-dynamic/      # 场景 5：跑起来看——直接运行/函数级 Oracle/�
 ├── SKILL.md             # 先跑起来看纪律、oracle.py 用法与边界、升级阶梯
 ├── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
 └── references/          # js-antidebug.md（JS 混淆分类/反调试中和模板/vm 沙箱脱 eval 链）
+
+traffic-analysis/ # 场景 6：流量里找信号——pcap 分诊/隧道/隐信道/USB HID/WiFi/TLS
+├── SKILL.md             # 开局三连、路由表（分诊发现→配方）、证据落账、时间盒
+├── scripts/             # 全零依赖（Python stdlib）：pcap_triage.py（协议分布+路由 hint，
+│                        # 占比 >60% exit 2）/ hid_keyboard.py / mouse_render.py /
+│                        # dnscat2_reassemble.py / timing_decode.py
+└── references/          # pcap-triage.md（修头/文件提取/凭据）、tunnels.md（DNS/ICMP/时序
+                         # 隐信道 + 元数据直方图方法论）、usb-hid.md、wifi-tls.md
 ```
 
 边界规则：执行代码在 ghidra-core（脱壳/动态域脚本归 re-unpack/re-dynamic 自管）；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。**知识片段的形态纪律：存储 = references/ 下可 grep 的纯数据文件，路由 = 消费它的 skill 在触发点写一行指针——不新建"知识库 skill"**（agent 不知道自己不知道什么，无触发点的知识库会被闲置）。
 
 ## 安装
 
-1. 六个目录全部拷到 `~/.dsh/skills/`：`ghidra-core`、`re-triage`、`re-unpack`、`ghidra-static`、`vuln-audit`、`re-dynamic`
+1. 七个目录全部拷到 `~/.dsh/skills/`：`ghidra-core`、`re-triage`、`re-unpack`、`ghidra-static`、`vuln-audit`、`re-dynamic`、`traffic-analysis`（traffic-analysis 独立可选——不用流量分析可以不拷）
 2. 建引擎 venv（Python ≥ 3.11）并 editable 安装引擎：
    ```bash
    python3.12 -m venv ~/Desktop/src/ghidra-bridge/ghidra-rpc-venv
@@ -97,7 +105,7 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 ## 设计要点
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；`load`（大文件导入分析）和 `version-track`（全函数关联）是仅有的长任务，用 run_in_background + `@out` 落盘
-- **1+5 拆分**：执行（core）与方法论（triage/unpack/static/audit/dynamic）解耦，场景 skill 零代码
+- **1+6 拆分**：执行（core）与方法论（triage/unpack/static/audit/dynamic/traffic）解耦，场景 skill 原则上零代码（traffic-analysis 例外：工具链完全不同，自带零依赖 stdlib 脚本，不污染 Ghidra 底座）
 - **Triage 硬门**：未记录 imports + 语言/壳判定前不深挖；干净导入表触发动态加载警告；壳判定三信号交叉（节名/magic/结构）
 - **确认即标注**：函数搞清立即 rename + plate comment，结论必须带地址与可复现命令
 - **机械闸门，不靠自觉**：文字纪律管不住的手由脚本拦——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、来源强制标注）、`read_views.py`（渲染文本与真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
@@ -113,3 +121,5 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 - [wgpsec/AboutSecurity](https://github.com/wgpsec/AboutSecurity) ctf-reverse 知识库
 - [Und3rf10w/ai-ghidra-tools](https://github.com/Und3rf10w/ai-ghidra-tools)（ghidra_scripts 脚本集，现为 legacy 冻结层）
 - [mukul975/Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills)（Apache-2.0，Go/Rust/crypto 识别/JS 反调试知识片段的提炼来源，已剔除 SOC/IOC 向内容）
+- [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) ctf-forensics（MIT，traffic-analysis 的 network/tunnel/USB HID 配方提炼来源，赛题出处随方保留）
+- [yaklang/hack-skills](https://github.com/yaklang/hack-skills) traffic-analysis-pcap（MIT，traffic-analysis 决策树骨架参考）

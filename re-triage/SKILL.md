@@ -6,7 +6,7 @@ whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面
 
 # RE Triage（场景 1：这是什么？）
 
-前置：无（本 skill 是逆向工作流入口）／后继：检出壳 → `~/.dsh/skills/re-unpack`；判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`
+前置：无（本 skill 是逆向工作流入口）／后继：检出壳 → `~/.dsh/skills/re-unpack`；判型完成要深挖 → `~/.dsh/skills/ghidra-static`；目的是找漏洞 → `~/.dsh/skills/vuln-audit`；具体命令 → `~/.dsh/skills/ghidra-core`；**输入是 pcap/抓包文件 → 不归本 skill，直接去 `~/.dsh/skills/traffic-analysis`**
 
 > **铁律 4（Triage 硬门）**：未记录 imports（DLL/SYS 还要 exports）+ 语言/壳判定之前，MUST NOT 进入深挖或动态分析。导入表只有 kernel32/ntdll 且极少 → 高度怀疑 `LoadLibrary`+`GetProcAddress` 动态加载，禁止宣称"无网络/无文件能力"。（全文见 ghidra-core §1）
 >
@@ -47,6 +47,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 - ③ 找漏洞 → `vuln-audit`（按 checklist 逐项排查，命中项回 ghidra-static 深挖确认）
 - ③ 静态卡住/要验证猜想/想先跑起来看 → `re-dynamic`（直接运行、函数级 Oracle、Frida/gdb/angr 入口）
 - 检出壳 → `re-unpack`（脱壳+验证）→ 脱壳产物回 ① 重新分诊
+- **输入是 pcap/pcapng 抓包 → `traffic-analysis`（流量分诊/隧道/隐信道/USB HID/WiFi/TLS）；它提取出的二进制回本 skill 重新分诊**
 - ④ 交付纪律（证据带地址+复现命令、产物 SHA256、禁止无证据否定结论）在 `ghidra-static` §交付
 - 任何阶段的命令细节 → `ghidra-core`；静态 15 分钟无关键路径 / 同一路径失败 2 次 → 转动态或换工具（铁律 6，全文见 ghidra-core §1）
 
