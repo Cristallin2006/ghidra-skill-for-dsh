@@ -62,3 +62,5 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 | 文件 | 何时读 |
 |---|---|
 | `references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数/侧信道/动态工具选型） |
+| `references/go-binary.md` | triage 报 `lang_hints.go=true` 或发现 Go 指纹（pclntab/buildinfo/garble）时 |
+| `references/rust-binary.md` | triage 报 `lang_hints.rust=true` 或发现 Rust 特征串时 |

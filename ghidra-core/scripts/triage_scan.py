@@ -301,6 +301,23 @@ def run():
             if all(hint_strings.values()):
                 break
 
+        # Stripped Go binaries may yield no defined strings; the buildinfo
+        # magic "\xff Go buildinf:" survives stripping, so scan raw bytes.
+        # (Memory.findBytes only has byte[] overloads — pass bytes, not str.)
+        if not hint_strings["go"]:
+            from ghidra.util.task import ConsoleTaskMonitor
+            _mon = ConsoleTaskMonitor()
+            _buildinfo = bytes.fromhex("ff 20 47 6f 20 62 75 69 6c 64 69 6e 66 3a")
+            for block in mem.getBlocks():
+                try:
+                    found = mem.findBytes(block.getStart(), block.getEnd(),
+                                          _buildinfo, None, True, _mon)
+                except Exception:
+                    found = None
+                if found is not None:
+                    hint_strings["go"] = True
+                    break
+
         dotnet = False
         for lib in imports:
             if lib.lower().startswith("mscoree"):

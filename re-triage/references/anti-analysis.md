@@ -72,3 +72,18 @@ NtSetInformationThread  rdtsc  cpuid  GetTickCount  QueryPerformanceCounter
 ## 6. 动态/静态不一致时
 
 Ghidra 分析与调试器行为对不上 → 查 PEB anti-debug 是否**改变了比较目标值**（反调试分支会走不同常量）。
+
+## 7. 反 VM / 反沙箱（样本"秒退/无行为"时的排查清单）
+
+样本在沙箱里无行为，第一反应是查这些检测点（命中即证实"有条件执行"，不是"无害"）：
+
+| 检测点 | 具体特征 |
+|---|---|
+| VM 进程/服务 | 字符串/进程名枚举：`vmtoolsd.exe`、`VBoxService.exe`、`prl_cc.exe` |
+| MAC 前缀 | 00:0C:29 / 00:50:56（VMware）、08:00:27（VirtualBox）、00:1C:42（Parallels） |
+| 注册表 artifact | `HKLM\SOFTWARE\VMware, Inc.`、`HKLM\HARDWARE\ACPI\DSDT\VBOX__` |
+| 用户交互检测 | `GetCursorPos`（坐标长期不变 = 沙箱）、`GetAsyncKeyState` |
+| 环境指纹 | 磁盘 < 60GB、CPU ≤ 2 核、RAM < 4GB（WMI/Win32 API 查询） |
+| sleep 膨胀 | `Sleep(600000)` 配合沙箱时间加速检测：`GetTickCount` 差值 ÷ 请求值异常 = 被加速 |
+
+绕过：Qiling/Unicorn 仿真天然无 VM artifact（仿真器优先原则，见 §5）；静态侧定位检测函数后 patch 返回值，或 xor 分支条件。

@@ -277,4 +277,5 @@ driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 | `~/.dsh/skills/re-triage/references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查（属 re-triage） |
 | `~/.dsh/skills/re-triage/references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表（属 re-triage） |
 | `references/evidence-ledger.md` | 铁律 7 执行机制：ledger.py 命令、断路器语义、台账格式（任何区域级分析前必读） |
+| `references/crypto-ident.md` | 求逆前先认算法：常量指纹（AES S-Box/ChaCha20/MD5/SHA 初值）、CryptoAPI/CNG/OpenSSL 对照表、弱点清单（铁律 9 的上游） |
 | `~/.dsh/skills/ghidra-static/references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数，属 ghidra-static） |

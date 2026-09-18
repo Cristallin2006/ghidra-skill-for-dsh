@@ -90,3 +90,9 @@ NUL 在 +10。自检失败或同输入多次运行结果不同 → **该 harness
 ## 防死循环
 
 oracle 搭不起来（缺 stub/反仿真/地址算不对）→ 按阶梯升，**每级 ≤15 分钟**；禁止反复重试同一层（铁律 6/7，全文见 ghidra-core §1；卡点写台账）。
+
+## References
+
+| 文件 | 何时读 |
+|---|---|
+| `references/js-antidebug.md` | CTF web/misc 遇到混淆 JS / 浏览器反调试时（混淆分类、反调试四件套中和模板、Node vm 沙箱脱 eval 链） |

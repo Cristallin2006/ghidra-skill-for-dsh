@@ -66,8 +66,8 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 
 | 识别特征（triage 自动报） | 走向 |
 |---|---|
-| `go.buildid` / `runtime.gopanic` / 巨大静态二进制 | 先跑 GoReSym 恢复符号（stripped 也行）→ 只看 `main.*` 包函数；Go string 是 {ptr,len} 非 NUL 结尾，Ghidra 默认字符串分析会漏，装 golang-loader 插件或靠 xref |
-| `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数 |
+| `go.buildid` / `runtime.gopanic` / 巨大静态二进制 | 先跑 GoReSym 恢复符号（stripped 也行）→ 只看 `main.*` 包函数；Go string 是 {ptr,len} 非 NUL 结尾，Ghidra 默认字符串分析会漏，装 golang-loader 插件或靠 xref。**深挖细节 → ghidra-static `references/go-binary.md`**（pclntab 版本指纹、garble/GoResolver、buildinfo 挖模块路径） |
+| `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数。**深挖细节 → ghidra-static `references/rust-binary.md`**（panic 路径=源码地图、crate 依赖还原） |
 | `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
 | UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
