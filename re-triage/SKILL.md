@@ -48,6 +48,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 - ③ 静态卡住/要验证猜想/想先跑起来看 → `re-dynamic`（直接运行、函数级 Oracle、Frida/gdb/angr 入口）
 - 检出壳 → `re-unpack`（脱壳+验证）→ 脱壳产物回 ① 重新分诊
 - **输入是 pcap/pcapng 抓包 → `traffic-analysis`（流量分诊/隧道/隐信道/USB HID/WiFi/TLS）；它提取出的二进制回本 skill 重新分诊**
+- **输入是 APK → 先拆组成：纯 DEX（无 lib/）→ `android-re`；含 so 且逻辑在 native → 按 ABI 选 so 走 ghidra-static**
 - ④ 交付纪律（证据带地址+复现命令、产物 SHA256、禁止无证据否定结论）在 `ghidra-static` §交付
 - 任何阶段的命令细节 → `ghidra-core`；静态 15 分钟无关键路径 / 同一路径失败 2 次 → 转动态或换工具（铁律 6，全文见 ghidra-core §1）
 
@@ -73,7 +74,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
 | UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
 | 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
-| APK 里的 .so | 优先选 x86_64 版本，Ghidra 反编译质量最好；JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
+| APK | **先拆开看组成**：含 `lib/` 且逻辑在 so → 按 ABI 选 so（优先 x86_64）走 ghidra-static；**纯 DEX（无 lib/）→ `~/.dsh/skills/android-re`**（多 dex 启发式：真逻辑常在极小 dex；签名/debuggable 判定、flag 形态全扫见 android-re `references/apk-triage.md`）。JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
 | WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
 | PE DOS stub 异常大 | 查 DOS stub 藏代码（`int 16h`），Windows 题常见 |
 

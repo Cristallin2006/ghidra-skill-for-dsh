@@ -31,6 +31,11 @@ python "$LEDGER" conclude <binary> --id 1 --overturn --conclusion "其实是 XOR
   --address 0x140001064 --evidence "oracle.py 实测" \
   --source runtime-oracle --independent yes
 
+# --id 接受字符串（C1、Q5-1…），缺省 = 下一个空闲整数
+# 长文本走文件（PowerShell 5.1 内嵌引号会炸参数边界，见 windows-powershell.md §1）：
+python "$LEDGER" conclude <binary> --conclusion-file c.txt --evidence-file e.txt \
+  --quote-file q.txt --address 0x140001064 --source read_views --independent yes
+
 # 卡点必记：断路器触发后，升级前先把「卡在哪、试过什么」留下来
 python "$LEDGER" stuck <binary> --at 0x140002000-0x140002040 \
   --tried "肉眼 hex,search_bytes" --escalate "确认是否 packed -> re-unpack"

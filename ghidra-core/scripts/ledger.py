@@ -22,6 +22,11 @@ Commands:
   status   <binary>
   render   <binary>
 
+Long-text args (--conclusion/--evidence/--quote) accept a file instead:
+--conclusion-file F etc. (UTF-8). Use files from PowerShell 5.1 — embedded
+quotes in inline args break parameter boundaries there.
+--id accepts any string (C1, Q5-1, ...); omitted = next free integer.
+
 Conclusion provenance (mandatory, Iron Rule 10): every conclusion must name
 WHERE its reading came from (--source: read_views | self-script |
 decompiler-render | runtime-gdb | runtime-oracle | manual) and whether a
@@ -243,14 +248,42 @@ def cmd_query(args) -> int:
 
 def cmd_conclude(args) -> int:
     binary = require_binary(args)
+
+    def _resolve(value, fpath, name):
+        if fpath:
+            p = Path(fpath)
+            if not p.is_file():
+                print(json.dumps({"ok": False,
+                                  "error": f"--{name}-file not found: {p}"},
+                                 ensure_ascii=False))
+                sys.exit(1)
+            return p.read_text(encoding="utf-8").strip()
+        return (value or "").strip()
+
+    conclusion = _resolve(args.conclusion, args.conclusion_file, "conclusion")
+    evidence = _resolve(args.evidence, args.evidence_file, "evidence")
+    quote = _resolve(args.quote, args.quote_file, "quote")
+    for name, val in (("conclusion", conclusion), ("evidence", evidence)):
+        if not val:
+            print(json.dumps({"ok": False,
+                              "error": f"--{name} 或 --{name}-file 必须给其一"},
+                             ensure_ascii=False))
+            return 1
+    if not (args.address or "").strip():
+        print(json.dumps({"ok": False, "error": "--address 必填"},
+                         ensure_ascii=False))
+        return 1
+
     jsonl, _ = ledger_paths(binary)
     entries = load_entries(jsonl)
     conclusions = [e for e in entries if e.get("type") == "conclude"]
 
     cid = args.id
     if cid is None:
-        cid = max([e.get("id", 0) for e in conclusions], default=0) + 1
-    old = next((e for e in conclusions if e.get("id") == cid), None)
+        cid = max([e.get("id") for e in conclusions
+                   if isinstance(e.get("id"), int)], default=0) + 1
+    old = next((e for e in conclusions
+                if str(e.get("id")) == str(cid)), None)
     if old and not args.overturn:
         print(f"[写入即锁定] 结论 #{cid} 已存在：\"{old['conclusion']}\"")
         print("推翻它必须加 --overturn 并在 --evidence 里给出新证据（推翻留痕）。")
@@ -264,14 +297,14 @@ def cmd_conclude(args) -> int:
         return 1
 
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
-             "id": cid, "conclusion": args.conclusion.strip(),
+             "id": cid, "conclusion": conclusion,
              "address": args.address.strip(), "region": args.address.strip(),
-             "evidence": args.evidence.strip(),
+             "evidence": evidence,
              "source": args.source, "independent": args.independent}
     if args.harness:
         entry["harness"] = args.harness.strip()
-    if args.quote:
-        entry["quote"] = args.quote.strip()
+    if quote:
+        entry["quote"] = quote
     if old:
         entry["overturns"] = {"conclusion": old["conclusion"],
                               "evidence": old["evidence"], "ts": old["ts"]}
@@ -343,9 +376,10 @@ def render(binary: Path) -> Path:
         "| # | 结论 | 地址 | 证据（命令/输出要点） | 来源 | 独立验证 | 时间 |",
         "|---|------|------|----------------------|------|---------|------|",
     ]
-    for cid in sorted(latest):
+    for cid in sorted(latest, key=lambda k: (0, k) if isinstance(k, int)
+                      else (1, str(k))):
         e = latest[cid]
-        concl = e["conclusion"]
+        concl = e["conclusion"].replace("\n", " ⏎ ")
         if "overturns" in e:
             concl += f"（推翻：{e['overturns']['conclusion']}）"
         source = e.get("source", "—")
@@ -354,7 +388,7 @@ def render(binary: Path) -> Path:
         indep = e.get("independent", "—")
         if indep == "no":
             concl = "⚠UNVERIFIED " + concl
-        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence']} "
+        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence'].replace(chr(10), ' ⏎ ')} "
                      f"| {source} | {indep} | {e['ts']} |")
     lines += ["", "## 已踏勘区域",
               "| 区域 | 回访次数 | 工具 | 最近观察 | 差异链 |",
@@ -399,9 +433,11 @@ def main() -> int:
 
     p = sub.add_parser("conclude", help="权威结论（写入即锁定；必须标注来源与独立性）")
     p.add_argument("binary")
-    p.add_argument("--conclusion", required=True)
+    p.add_argument("--conclusion")
+    p.add_argument("--conclusion-file", help="长文本走文件（UTF-8），绕开 shell 引号")
     p.add_argument("--address", required=True)
-    p.add_argument("--evidence", required=True)
+    p.add_argument("--evidence")
+    p.add_argument("--evidence-file", help="长文本走文件（UTF-8）")
     p.add_argument("--source", required=True,
                    choices=["read_views", "self-script", "decompiler-render",
                             "runtime-gdb", "runtime-oracle", "manual"],
@@ -410,7 +446,8 @@ def main() -> int:
                    help="是否有第二独立来源交叉印证；no → render 标 UNVERIFIED")
     p.add_argument("--harness", help="source=self-script 时必填：脚本路径+版本")
     p.add_argument("--quote", help="结论所依据的工具输出原文（verbatim）")
-    p.add_argument("--id", type=int)
+    p.add_argument("--quote-file", help="quote 长文本走文件（UTF-8）")
+    p.add_argument("--id", help="字符串/整数均可（C1、Q5-1…）；缺省 = 下一个空闲整数")
     p.add_argument("--overturn", action="store_true")
     p.set_defaults(fn=cmd_conclude)
 
