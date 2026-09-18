@@ -18,6 +18,7 @@ Ghidra 12.x headless 自动化逆向 skill 集，适配 [dsh](https://www.npmjs.
 | 验证独立性（铁律 10） | 用自己 patch 的进程+自写 harness 验证自己的理解 | `ledger.py conclude` 强制 `--source`/`--independent`，无独立来源标 ⚠UNVERIFIED |
 | 函数级 Oracle | "跑起来看"缺失，求逆靠脑推 | `oracle.py`（qiling）：单函数真实调用 + `--break`/`--dump` 抓中间态，x86-64/i386 |
 | 脱壳域 | packed 字节上死磕 30+ 轮 | re-unpack：upx / upx_repair.py（改头 UPX）/ unpacker + 强制验证三件套 |
+| Go stripped 识别 | 字符串扫描在 stripped Go 二进制上漏报 | triage 补 buildinfo magic（`\xff Go buildinf:`）内存字节扫描兜底，实测 Go 1.26 stripped PE 命中 |
 
 ## 结构（1 底座 + 5 场景）
 
@@ -29,10 +30,11 @@ ghidra-core/     # 底座：怎么执行（唯一放代码的地方）
 │                        # + 三道闸门：ledger.py（断路器）/ read_views.py（权威读数）/ crypto_sanity.py（求逆闸门）
 │                        # + legacy 冻结脚本
 └── references/          # headless.md（执行模型）、scripting.md（脚本惯用法）、evidence-ledger.md（台账机制）
+                         # crypto-ident.md（加密算法识别：常量指纹/API 对照/弱点清单，铁律 9 上游）
 
 re-triage/       # 场景 1：这是什么？——判文件类型/语言/壳/威胁面，决定路线
 ├── SKILL.md             # Triage 硬门、分诊流程、语言/平台路由表
-└── references/          # triage.md（分诊细则）、anti-analysis.md（反分析对照）
+└── references/          # triage.md（分诊细则）、anti-analysis.md（反调试/反混淆/反 VM 对照）
 
 re-unpack/       # 场景 2：脱壳——检出壳后的唯一下一站（脱壳+强制验证+失败阶梯）
 ├── SKILL.md             # 选型表（壳→工具 tier）、验证三件套、防死循环专节
@@ -42,6 +44,8 @@ re-unpack/       # 场景 2：脱壳——检出壳后的唯一下一站（脱�
 ghidra-static/   # 场景 3：深挖它——反编译/xref/标注/patch/交付
 ├── SKILL.md             # Recon/Analysis/Annotate/Patch 工作流、交付纪律
 └── references/          # ctf-patterns.md（CTF 模式库与 flag 狩猎）
+                         # go-binary.md（pclntab/buildinfo 指纹、garble/GoResolver）
+                         # rust-binary.md（panic 路径=源码地图、crate 依赖还原）
 
 vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
 ├── SKILL.md             # 审计流程、可达性优先纪律
@@ -49,10 +53,11 @@ vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
 
 re-dynamic/      # 场景 5：跑起来看——直接运行/函数级 Oracle/动态插桩入口
 ├── SKILL.md             # 先跑起来看纪律、oracle.py 用法与边界、升级阶梯
-└── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
+├── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
+└── references/          # js-antidebug.md（JS 混淆分类/反调试中和模板/vm 沙箱脱 eval 链）
 ```
 
-边界规则：执行代码在 ghidra-core（脱壳/动态域脚本归 re-unpack/re-dynamic 自管）；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。
+边界规则：执行代码在 ghidra-core（脱壳/动态域脚本归 re-unpack/re-dynamic 自管）；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。**知识片段的形态纪律：存储 = references/ 下可 grep 的纯数据文件，路由 = 消费它的 skill 在触发点写一行指针——不新建"知识库 skill"**（agent 不知道自己不知道什么，无触发点的知识库会被闲置）。
 
 ## 安装
 
@@ -107,3 +112,4 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 - [zhaoxuya520/reverse-skill](https://github.com/zhaoxuya520/reverse-skill)（MIT，方法论）
 - [wgpsec/AboutSecurity](https://github.com/wgpsec/AboutSecurity) ctf-reverse 知识库
 - [Und3rf10w/ai-ghidra-tools](https://github.com/Und3rf10w/ai-ghidra-tools)（ghidra_scripts 脚本集，现为 legacy 冻结层）
+- [mukul975/Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills)（Apache-2.0，Go/Rust/crypto 识别/JS 反调试知识片段的提炼来源，已剔除 SOC/IOC 向内容）
