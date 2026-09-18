@@ -4,14 +4,31 @@ Ghidra 12.x headless 自动化逆向 skill 集，适配 [dsh](https://www.npmjs.
 
 执行引擎是 **ghidra-rpc 常驻 daemon**（vendor 自 [Cellebrite Labs ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) 0.2.0 + dsh 补丁，见 `ghidra-core/engine/VENDOR.md`）：一次启动常驻 JVM，之后每条命令 ~0.2s——不依赖 Jython 扩展、不需要 Ghidra GUI、不需要 MCP server。
 
-## 结构（1 底座 + 4 场景）
+## 实测性能
+
+> 同一道 CTF 逆向题（UPX 壳 + 换表 base64 + RC4，ctf.show `encode`）：**调校前 40 分钟做不出（且交付错误结论）→ 调校后 16 分钟解出**。提速来自机制而非模型——每次实战踩坑都被固化成铁律 + 脚本闸门（见下表）。
+
+| 优化 | 解决的问题 | 载体 |
+|---|---|---|
+| 常驻 daemon | analyzeHeadless 每次冷启动 JVM，单命令半分钟 → **~0.2s** | `rpc_driver.py` + engine |
+| Triage 多信号壳判定 | 只查节名 "UPX"，改节名即漏报 | 节名 + `UPX!` magic + 结构特征三信号交叉 |
+| 死循环断路器（铁律 7） | 同一地址区间肉眼↔脚本横跳几十轮 | `ledger.py`：同区回访强制 `--delta`，答不出 exit 2；结论写入即锁定 |
+| 权威读数（铁律 8） | 反编译器渲染吞前导 0、手工转录错长度 | `read_views.py`：三视图 + `--expect-len`/`--expect-hex` 对照 |
+| 求逆闸门（铁律 9） | 跨缓冲区误读（28 字节读成 49 字符）后带病求逆 | `crypto_sanity.py`：hex 奇数 / base64 非 4 倍数 / 流密码不等长 → exit 2 |
+| 验证独立性（铁律 10） | 用自己 patch 的进程+自写 harness 验证自己的理解 | `ledger.py conclude` 强制 `--source`/`--independent`，无独立来源标 ⚠UNVERIFIED |
+| 函数级 Oracle | "跑起来看"缺失，求逆靠脑推 | `oracle.py`（qiling）：单函数真实调用 + `--break`/`--dump` 抓中间态，x86-64/i386 |
+| 脱壳域 | packed 字节上死磕 30+ 轮 | re-unpack：upx / upx_repair.py（改头 UPX）/ unpacker + 强制验证三件套 |
+
+## 结构（1 底座 + 5 场景）
 
 ```
 ghidra-core/     # 底座：怎么执行（唯一放代码的地方）
-├── SKILL.md             # 环境、六条铁律、快速上手、三层能力清单、移植坑、能力边界
+├── SKILL.md             # 环境、十条铁律、快速上手、三层能力清单、移植坑、能力边界
 ├── engine/ghidra-rpc/   # vendored 引擎源码 + dsh 补丁（VENDOR.md 跟踪）
-├── scripts/             # rpc_driver.py（统一入口）/ doctor.py / launch_gui.py + legacy 冻结脚本
-└── references/          # headless.md（执行模型）、scripting.md（脚本惯用法）
+├── scripts/             # rpc_driver.py（统一入口）/ doctor.py / launch_gui.py
+│                        # + 三道闸门：ledger.py（断路器）/ read_views.py（权威读数）/ crypto_sanity.py（求逆闸门）
+│                        # + legacy 冻结脚本
+└── references/          # headless.md（执行模型）、scripting.md（脚本惯用法）、evidence-ledger.md（台账机制）
 
 re-triage/       # 场景 1：这是什么？——判文件类型/语言/壳/威胁面，决定路线
 ├── SKILL.md             # Triage 硬门、分诊流程、语言/平台路由表
@@ -19,6 +36,7 @@ re-triage/       # 场景 1：这是什么？——判文件类型/语言/壳/�
 
 re-unpack/       # 场景 2：脱壳——检出壳后的唯一下一站（脱壳+强制验证+失败阶梯）
 ├── SKILL.md             # 选型表（壳→工具 tier）、验证三件套、防死循环专节
+├── scripts/             # upx_repair.py（UPX 头篡改修复）
 └── references/          # unpack-playbook.md（多层壳/IAT 重建/各壳对策）
 
 ghidra-static/   # 场景 3：深挖它——反编译/xref/标注/patch/交付
@@ -75,8 +93,10 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；`load`（大文件导入分析）和 `version-track`（全函数关联）是仅有的长任务，用 run_in_background + `@out` 落盘
 - **1+5 拆分**：执行（core）与方法论（triage/unpack/static/audit/dynamic）解耦，场景 skill 零代码
-- **Triage 硬门**：未记录 imports + 语言/壳判定前不深挖；干净导入表触发动态加载警告
+- **Triage 硬门**：未记录 imports + 语言/壳判定前不深挖；干净导入表触发动态加载警告；壳判定三信号交叉（节名/magic/结构）
 - **确认即标注**：函数搞清立即 rename + plate comment，结论必须带地址与可复现命令
+- **机械闸门，不靠自觉**：文字纪律管不住的手由脚本拦——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、来源强制标注）、`read_views.py`（渲染文本与真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
+- **验证独立性**：patch 态只能探索控制流，禁止验证数据模型；自建 harness 先过已知答案自检；否定性结论必须先正向复现已知输出——灵感来自 Google P0 Naptime 的 Perfect Verification 原则
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做。详见 ghidra-core/SKILL.md §8
 
 ## 许可与致谢
