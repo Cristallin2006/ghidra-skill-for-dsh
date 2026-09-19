@@ -10,7 +10,7 @@ Host-side tool (Python 3.8+, stdlib only; decompilers run as subprocesses).
   3. 反编译：读入口 pyc 的 4 字节 magic 判断 bytecode 版本，自动选调：
        py < 3.7        -> uncompyle6（re-tools-venv）
        3.7 <= py <=3.8 -> decompyle3（re-tools-venv，对 3.7/3.8 语法更准）
-       py >= 3.9       -> pycdc（未安装则给安装提示，不视为失败）
+       py >= 3.9       -> pycdc（Windows tools/pycdc 或 WSL 源码构建，自动探测；未安装则给提示，不视为失败）
   4. 全程 UTF-8 JSON 输出。
 
 用法：
@@ -182,10 +182,23 @@ def pyc_version(pyc: Path):
     return None
 
 
-def find_pycdc() -> str | None:
+def _win_to_wsl(p: str) -> str:
+    """C:\\Users\\x -> /mnt/c/Users/x（供 wsl pycdc 读 Windows 侧文件）。"""
+    p = str(Path(p).resolve())
+    if len(p) >= 2 and p[1] == ":":
+        return "/mnt/" + p[0].lower() + p[2:].replace("\\", "/")
+    return p.replace("\\", "/")
+
+
+def find_pycdc() -> tuple[str, str] | None:
+    """返回 (mode, ref)：mode='win' ref=exe 路径；mode='wsl' 走 WSL 的 pycdc。"""
     for c in PYCDC_CANDIDATES:
         if c and Path(c).is_file():
-            return str(c)
+            return ("win", str(c))
+    r = run_cmd(["wsl", "-d", "Ubuntu", "-u", "root", "--",
+                 "bash", "-lc", "command -v pycdc"], timeout=30)
+    if r["returncode"] == 0 and r["stdout"]:
+        return ("wsl", r["stdout"].splitlines()[-1].strip())
     return None
 
 
@@ -244,9 +257,15 @@ def decompile_one(pyc: Path, decom_dir: Path) -> dict:
         if rec["ok"]:
             rec["output"] = str(out_py)
     elif choice["tool"] == "pycdc":
-        pycdc = find_pycdc()
-        if pycdc:
-            r = run_cmd([pycdc, str(pyc)])
+        found = find_pycdc()
+        if found:
+            mode, ref = found
+            if mode == "wsl":
+                r = run_cmd(["wsl", "-d", "Ubuntu", "-u", "root", "--",
+                             "pycdc", _win_to_wsl(str(pyc))])
+                rec["decompiler"] = "pycdc(wsl)"
+            else:
+                r = run_cmd([ref, str(pyc)])
             if r["returncode"] == 0 and r["stdout"]:
                 out_py.write_text(r["stdout"], encoding="utf-8")
                 rec["ok"] = True
@@ -255,8 +274,8 @@ def decompile_one(pyc: Path, decom_dir: Path) -> dict:
             if r["stderr"]:
                 rec["stderr"] = r["stderr"][-2000:]
         else:
-            rec["hint"] = ("pycdc 未安装：choco install pycdc 或源码构建 Decompyle++ "
-                           "到 ~/Desktop/src/tools/pycdc/pycdc.exe；"
+            rec["hint"] = ("pycdc 未安装：Windows 侧放 ~/Desktop/src/tools/pycdc/pycdc.exe，"
+                           "或 WSL 源码构建 Decompyle++（cmake+g++，本脚本自动探测）；"
                            "也可在线 https://pylingual.io 兜底")
     return rec
 

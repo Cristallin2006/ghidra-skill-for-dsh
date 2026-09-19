@@ -65,6 +65,7 @@
 | upx-ucl 4.2.2 | `/usr/bin/upx` | Linux 侧 UPX（ELF 壳） | re-unpack ELF 样本 |
 | ruby-full 3.x | apt | one_gadget/seccomp-tools 的运行时 | 依赖 |
 | file 5.45 | `/usr/bin/file` | 判型 | re-triage（WSL 侧备选；Git Bash 也有） |
+| pycdc（Decompyle++，源码构建 master） | `/usr/local/bin/pycdc`（构建树 `/root/pycdc`） | pyc 反编译，覆盖 Python ≥3.9（uncompyle6/decompyle3 的唯一后继） | re-unpack PyInstaller 现代样本；`pyinstaller_extract.py` 自动探测 Windows/WSL 两侧 |
 
 WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`。
 
