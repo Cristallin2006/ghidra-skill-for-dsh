@@ -1,101 +1,41 @@
 # ghidra-skill-for-dsh
 
-Ghidra 12.x headless 自动化逆向 skill 集，适配 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）。面向 CTF 逆向题、crackme、恶意样本分诊、固件分析、漏洞预筛，覆盖 PE / ELF / Mach-O / raw 固件。
+面向 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）的逆向工程 agent skill 家族：Ghidra 12.x headless 常驻 daemon（~0.2s/命令，无 Jython/GUI/MCP 依赖）+ 七场景方法论。覆盖 CTF 逆向、crackme、恶意样本分诊、漏洞预筛、pcap 取证、APK 分析。
 
-执行引擎是 **ghidra-rpc 常驻 daemon**（vendor 自 [Cellebrite Labs ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) 0.2.0 + dsh 补丁，见 `ghidra-core/engine/VENDOR.md`）：一次启动常驻 JVM，之后每条命令 ~0.2s——不依赖 Jython 扩展、不需要 Ghidra GUI、不需要 MCP server。
+Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored [ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) + dsh patches) plus seven scenario skills — triage / unpack / static / vuln-audit / dynamic / traffic / android-re — for CTF reverse engineering, unpacking, malware triage, pcap forensics and APK analysis.
 
 ## 实测性能
 
-> 同一道 CTF 逆向题（UPX 壳 + 换表 base64 + RC4，ctf.show `encode`）：**调校前 40 分钟做不出（且交付错误结论）→ 调校后 16 分钟解出**。提速来自机制而非模型——每次实战踩坑都被固化成铁律 + 脚本闸门（见下表）。
-
-| 优化 | 解决的问题 | 载体 |
-|---|---|---|
-| 常驻 daemon | analyzeHeadless 每次冷启动 JVM，单命令半分钟 → **~0.2s** | `rpc_driver.py` + engine |
-| Triage 多信号壳判定 | 只查节名 "UPX"，改节名即漏报 | 节名 + `UPX!` magic + 结构特征三信号交叉 |
-| 死循环断路器（铁律 7） | 同一地址区间肉眼↔脚本横跳几十轮 | `ledger.py`：同区回访强制 `--delta`，答不出 exit 2；结论写入即锁定 |
-| 权威读数（铁律 8） | 反编译器渲染吞前导 0、手工转录错长度 | `read_views.py`：三视图 + `--expect-len`/`--expect-hex` 对照 |
-| 求逆闸门（铁律 9） | 跨缓冲区误读（28 字节读成 49 字符）后带病求逆 | `crypto_sanity.py`：hex 奇数 / base64 非 4 倍数 / 流密码不等长 → exit 2 |
-| 验证独立性（铁律 10） | 用自己 patch 的进程+自写 harness 验证自己的理解 | `ledger.py conclude` 强制 `--source`/`--independent`，无独立来源标 ⚠UNVERIFIED |
-| 函数级 Oracle | "跑起来看"缺失，求逆靠脑推 | `oracle.py`（qiling）：单函数真实调用 + `--break`/`--dump` 抓中间态，x86-64/i386 |
-| 脱壳域 | packed 字节上死磕 30+ 轮 | re-unpack：upx / upx_repair.py（改头 UPX）/ unpacker + 强制验证三件套 |
-| Go stripped 识别 | 字符串扫描在 stripped Go 二进制上漏报 | triage 补 buildinfo magic（`\xff Go buildinf:`）内存字节扫描兜底，实测 Go 1.26 stripped PE 命中 |
+同一道 CTF 逆向题（UPX 壳 + 换表 base64 + RC4）：调校前 40 分钟做不出 → 调校后 **16 分钟解出**。提速来自机制而非模型：常驻 daemon + 三道脚本闸门（断路器/权威读数/求逆检查）+ 函数级 Oracle + 脱壳域，每次实战踩坑都固化成铁律与脚本。
 
 ## 结构（1 底座 + 7 场景）
 
-```
-ghidra-core/     # 底座：怎么执行（唯一放代码的地方）
-├── SKILL.md             # 环境、十条铁律、快速上手、三层能力清单、移植坑、能力边界
-├── engine/ghidra-rpc/   # vendored 引擎源码 + dsh 补丁（VENDOR.md 跟踪）
-├── scripts/             # rpc_driver.py（统一入口）/ doctor.py / launch_gui.py
-│                        # + 三道闸门：ledger.py（断路器）/ read_views.py（权威读数）/ crypto_sanity.py（求逆闸门）
-│                        # + legacy 冻结脚本（unreferenced_funcs.py 等经 exec-code 调用）
-└── references/          # headless.md（执行模型）、scripting.md（脚本惯用法）、evidence-ledger.md（台账机制）
-                         # crypto-ident.md（加密算法识别：常量指纹/API 对照/弱点清单，铁律 9 上游）
+| 目录 | 职责 |
+|---|---|
+| `ghidra-core` | 唯一放代码的底座：engine（ghidra-rpc + dsh 补丁）、`rpc_driver.py` 统一入口、`doctor.py` 环境自检、三道闸门 `ledger.py` / `read_views.py` / `crypto_sanity.py` |
+| `re-triage` | 未知二进制第一步：判型/语言/壳三信号交叉（节名 + magic + 结构），输出路线决策 |
+| `re-unpack` | 脱壳 + 强制验证：UPX/ASPack/Themida/VMProtect/多层壳，PyInstaller 一条龙（pycdc 覆盖 Python ≥3.9） |
+| `ghidra-static` | 静态深挖：反编译/xref/标注/patch/交付；Go/Rust stripped 指纹、CTF 模式库 |
+| `vuln-audit` | 漏洞模式 checklist：内存破坏/格式化串/整数溢出/命令注入等 8 类，可达性优先 |
+| `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
+| `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
+| `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
 
-re-triage/       # 场景 1：这是什么？——判文件类型/语言/壳/威胁面，决定路线
-├── SKILL.md             # Triage 硬门、分诊流程、语言/平台路由表
-└── references/          # triage.md（分诊细则）、anti-analysis.md（反调试/反混淆/反 VM 对照）
-
-re-unpack/       # 场景 2：脱壳——检出壳后的唯一下一站（脱壳+强制验证+失败阶梯）
-├── SKILL.md             # 选型表（壳→工具 tier）、验证三件套、防死循环专节
-├── scripts/             # upx_repair.py（UPX 头篡改修复）、pyinstaller_extract.py（PyInstaller 一条龙）
-└── references/          # unpack-playbook.md（多层壳/IAT 重建/各壳对策）
-
-ghidra-static/   # 场景 3：深挖它——反编译/xref/标注/patch/交付
-├── SKILL.md             # Recon/Analysis/Annotate/Patch 工作流、交付纪律
-└── references/          # ctf-patterns.md（CTF 模式库与 flag 狩猎）
-                         # go-binary.md（pclntab/buildinfo 指纹、garble/GoResolver）
-                         # rust-binary.md（panic 路径=源码地图、crate 依赖还原）
-
-vuln-audit/      # 场景 4：它有没有病？——漏洞模式 checklist
-├── SKILL.md             # 审计流程、可达性优先纪律
-└── references/          # vuln-patterns.md（8 类漏洞模式：信号/命令/判定/误报）
-
-re-dynamic/      # 场景 5：跑起来看——直接运行/函数级 Oracle/动态插桩入口
-├── SKILL.md             # 先跑起来看纪律、oracle.py 用法与边界、升级阶梯
-├── scripts/             # oracle.py（qiling 后端的函数级 Oracle，WSL 运行）
-│                        # frida_time_hook.py（覆写时间/随机源，概率校验→确定性 oracle）
-│                        # win_gui_drive.py（pywin32 GUI 消息驱动：Post 开窗/Send 连点）
-└── references/          # js-antidebug.md（JS 混淆分类/反调试中和模板/vm 沙箱脱 eval 链）
-
-traffic-analysis/ # 场景 6：流量里找信号——pcap 分诊/隧道/隐信道/USB HID/WiFi/TLS
-├── SKILL.md             # 开局三连、路由表（分诊发现→配方）、证据落账、时间盒
-├── scripts/             # 全零依赖（Python stdlib）：pcap_triage.py（协议分布+路由 hint，
-│                        # 占比 >60% exit 2）/ hid_keyboard.py / mouse_render.py /
-│                        # dnscat2_reassemble.py / timing_decode.py
-└── references/          # pcap-triage.md（修头/文件提取/凭据）、tunnels.md（DNS/ICMP/时序
-                         # 隐信道 + 元数据直方图方法论）、usb-hid.md、wifi-tls.md
-
-android-re/      # 场景 7：纯 DEX APK 找校验点——分诊/反编译/adb 动态/真机 oracle/重签
-├── SKILL.md             # 多 dex 启发式（真逻辑常在极小 dex）、反编译四档优先级（jadx→
-│                        # apkanalyzer→androguard→自写=铁律 11 双源验证）、Toast 锚点定位、
-│                        # 真机 oracle 五步、v1 未签名改写重签
-└── references/          # apk-triage.md（签名判定/多 dex 统计法/flag 全扫 regex）、
-                         # dalvik-notes.md（smali 速查/equals 定位/命名误导识别）
-```
-
-边界规则：执行代码在 ghidra-core（脱壳/动态域脚本归 re-unpack/re-dynamic 自管）；场景 skill 只有方法论，命令细节一律指针回 ghidra-core；知识不重复、路由互斥。**知识片段的形态纪律：存储 = references/ 下可 grep 的纯数据文件，路由 = 消费它的 skill 在触发点写一行指针——不新建"知识库 skill"**（agent 不知道自己不知道什么，无触发点的知识库会被闲置）。
+边界规则：执行代码在 core，场景 skill 只有方法论；知识存 `references/` 可 grep 的纯数据文件，路由靠触发点指针，不建"知识库 skill"。
 
 ## 安装
 
-1. 八个目录全部拷到 `~/.dsh/skills/`：`ghidra-core`、`re-triage`、`re-unpack`、`ghidra-static`、`vuln-audit`、`re-dynamic`、`traffic-analysis`、`android-re`（traffic-analysis 与 android-re 独立可选——不做流量/Android 可以不拷）
+1. 八个目录拷到 `~/.dsh/skills/`（traffic-analysis / android-re 独立可选）
 2. 建引擎 venv（Python ≥ 3.11）并 editable 安装引擎：
    ```bash
-   python3.12 -m venv ~/Desktop/src/ghidra-bridge/ghidra-rpc-venv
-   ~/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts/python.exe -m pip install \
-       -e ~/.dsh/skills/ghidra-core/engine/ghidra-rpc
+   python3.12 -m venv ~/ghidra-rpc-venv
+   ~/ghidra-rpc-venv/Scripts/python.exe -m pip install -e ~/.dsh/skills/ghidra-core/engine/ghidra-rpc
    ```
-3. 工具层：**完整清单与安装步骤见 [TOOLCHAIN.md](TOOLCHAIN.md)**（Ghidra 引擎栈 / Windows CLI 双 venv / tools\ 绿色软件 / WSL Ubuntu / Ghidra 插件 / 未装项）。三层分级：Tier A 轻量高频全装、Tier B 重 pip 或 WSL、Tier C GUI/插件。是否已装以 `doctor.py` 的 toolchain 节为机器可读真相源。
-4. 设 `GHIDRA_INSTALL_DIR`（Ghidra 12.x 安装目录，含 `support/` 那层）与 `JAVA_HOME`（JDK 21+）
-5. 自检：`python ~/.dsh/skills/ghidra-core/scripts/doctor.py`（8 项全绿 exit 0）
+3. 工具层见 [TOOLCHAIN.md](TOOLCHAIN.md)（Tier A/B/C 分级清单；已装状态以 `doctor.py` toolchain 节为准）
+4. 设 `GHIDRA_INSTALL_DIR`（Ghidra 12.x 安装目录）与 `JAVA_HOME`（JDK 21+）；可选 `DSH_GHIDRA_WS` 指定工作区
+5. 自检：`python ~/.dsh/skills/ghidra-core/scripts/doctor.py`（全绿 exit 0）
 
-| 环境变量 | 示例 | 含义 |
-|---|---|---|
-| `GHIDRA_INSTALL_DIR` | `C:\t001s\...\ghidra_12.1.3_PUBLIC` | Ghidra 安装目录 |
-| `JAVA_HOME` | `C:\Java` | JDK 21+ |
-| `DSH_GHIDRA_WS` | `~/.dsh/ghidra-workspace` | 工作区（projects/out/logs） |
-
-**Windows 注意**：Ghidra 的 `ProjectLocator` 拒绝任何以 `.` 开头的路径元素，`~/.dsh/...` 不能直接传给 JVM——底座自动走 junction `~/dsh-ghidra-workspace`（engine 已打不解析 junction 的补丁）。
+**Windows 注意**：Ghidra 的 `ProjectLocator` 拒绝以 `.` 开头的路径元素，`~/.dsh/...` 不能直接传给 JVM——底座自动走 junction `~/dsh-ghidra-workspace`。
 
 ## 用法（30 秒）
 
@@ -109,17 +49,14 @@ python "$SK/rpc_driver.py" rename-function /path/to/binary FUN_00401000 check_fl
 python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 ```
 
-结果约定：`@绝对路径` 作为首个参数 = 完整 JSON 落盘；写操作即刻生效并自动存盘。完整命令清单见 `ghidra-core/SKILL.md` §5。
+`@绝对路径` 作首个参数 = 完整 JSON 落盘；写操作即刻生效并自动存盘。完整命令清单见 `ghidra-core/SKILL.md`。
 
 ## 设计要点
 
-- **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；`load`（大文件导入分析）和 `version-track`（全函数关联）是仅有的长任务，用 run_in_background + `@out` 落盘
-- **1+7 拆分**：执行（core）与方法论（triage/unpack/static/audit/dynamic/traffic/android）解耦，场景 skill 原则上零代码（traffic-analysis 例外：工具链完全不同，自带零依赖 stdlib 脚本，不污染 Ghidra 底座）
-- **Triage 硬门**：未记录 imports + 语言/壳判定前不深挖；干净导入表触发动态加载警告；壳判定三信号交叉（节名/magic/结构）
-- **确认即标注**：函数搞清立即 rename + plate comment，结论必须带地址与可复现命令
-- **机械闸门，不靠自觉**：文字纪律管不住的手由脚本拦——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、来源强制标注）、`read_views.py`（渲染文本与真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
-- **验证独立性**：patch 态只能探索控制流，禁止验证数据模型；自建 harness 先过已知答案自检；否定性结论必须先正向复现已知输出——灵感来自 Google P0 Naptime 的 Perfect Verification 原则
-- **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做。详见 ghidra-core/SKILL.md §8
+- **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；长任务（load / version-track）走后台 + `@out` 落盘
+- **机械闸门，不靠自觉**：`ledger.py`（同区回访强制 `--delta`、结论写入即锁定）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
+- **验证独立性**：结论强制独立来源，无则标 ⚠UNVERIFIED——Google P0 Naptime 的 Perfect Verification 原则
+- **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做（ghidra-core/SKILL.md §8）
 
 ## 许可与致谢
 
@@ -129,6 +66,6 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 - [zhaoxuya520/reverse-skill](https://github.com/zhaoxuya520/reverse-skill)（MIT，方法论）
 - [wgpsec/AboutSecurity](https://github.com/wgpsec/AboutSecurity) ctf-reverse 知识库
 - [Und3rf10w/ai-ghidra-tools](https://github.com/Und3rf10w/ai-ghidra-tools)（ghidra_scripts 脚本集，现为 legacy 冻结层）
-- [mukul975/Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills)（Apache-2.0，Go/Rust/crypto 识别/JS 反调试知识片段的提炼来源，已剔除 SOC/IOC 向内容）
-- [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) ctf-forensics（MIT，traffic-analysis 的 network/tunnel/USB HID 配方提炼来源，赛题出处随方保留）
-- [yaklang/hack-skills](https://github.com/yaklang/hack-skills) traffic-analysis-pcap（MIT，traffic-analysis 决策树骨架参考）
+- [mukul975/Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills)（Apache-2.0，Go/Rust/crypto 识别/JS 反调试知识片段）
+- [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) ctf-forensics（MIT，traffic-analysis 配方）
+- [yaklang/hack-skills](https://github.com/yaklang/hack-skills) traffic-analysis-pcap（MIT，决策树骨架）

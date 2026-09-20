@@ -1,6 +1,6 @@
 ---
 name: re-triage
-description: 未知二进制的第一步：判文件类型、语言、壳、威胁面，决定后续路线（静态深挖/动态/换工具）。触发：新样本、未知 exe/elf/bin/固件、"看看这个文件"、疑似加壳、恶意样本分诊。只做判断和路线决策，不做深挖——要深挖去 ghidra-static。
+description: 未知二进制的第一步（file triage / sample identification）：判文件类型（PE/ELF/Mach-O/固件/APK）、语言（C/C++/Go/Rust/.NET/Python）、壳（packer detection）、威胁面，决定后续路线（静态深挖/动态/换工具）。触发：新样本、未知 exe/elf/bin/固件、"看看这个文件"、疑似加壳、恶意样本分诊（malware triage）。只做判断和路线决策，不做深挖——要深挖去 ghidra-static。
 whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面、接下来怎么打"时；新样本、疑似加壳、恶意软件初筛、CTF 题目开题
 ---
 

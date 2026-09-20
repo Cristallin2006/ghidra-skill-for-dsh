@@ -1,6 +1,6 @@
 ---
 name: android-re
-description: Android/APK 逆向（纯 DEX / Java 层）：APK 分诊（结构/签名/Manifest/多 dex 自有类统计/flag 全扫）、反编译与校验点定位、adb 动态驱动与真机 oracle、v1 未签名 APK 改写重签。触发：APK/Android/DEX/安卓/逆向 APK/smali/jadx。不分析原生 so——APK 内含 lib/ 的 .so 走 ghidra-static；不做流量分析——抓包/隐信道走 traffic-analysis。
+description: Android/APK 逆向（纯 DEX / Java 层，APK reversing）：APK 分诊（结构/签名/Manifest/多 dex 自有类统计/flag 全扫）、反编译与校验点定位（jadx/smali）、adb 动态驱动与真机 oracle、v1 未签名 APK 改写重签。触发：APK/Android/DEX/安卓/逆向 APK/smali/jadx。不分析原生 so——APK 内含 lib/ 的 .so 走 ghidra-static；不做流量分析——抓包/隐信道走 traffic-analysis。
 whenToUse: 拿到 .apk/.dex 样本时；re-triage 判定"APK 不含 lib/（纯 DEX）"后的主线；多 dex 分诊、签名/Manifest 分诊、flag 形态字面量全扫、const-string→equals 校验点定位、adb/am/input/uiautomator/screencap 动态驱动、真机 oracle 验证候选答案、v1 未签名 APK 改写后 apksigner 重签
 ---
 

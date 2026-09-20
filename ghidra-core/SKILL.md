@@ -1,6 +1,6 @@
 ---
 name: ghidra-core
-description: Ghidra headless 执行底座——rpc_driver/ghidra-rpc 命令、脚本清单、环境自检、engine 说明。当需要实际运行任何 Ghidra 命令、环境排障、或其他逆向 skill 里的操作不知道具体命令时加载。不含分析方法论。
+description: Ghidra headless 执行底座（execution engine）——rpc_driver/ghidra-rpc 命令、daemon 起停、doctor 环境自检、脚本清单。当需要实际运行任何 Ghidra 命令（import/decompile/disassemble/rename/patch/version-track）、环境排障、或其他逆向 skill 里的操作不知道具体命令时加载。不含分析方法论。
 whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障、环境自检（doctor）、拉起 Ghidra GUI 时；re-triage/ghidra-static/vuln-audit 里的操作步骤缺少具体命令时
 ---
 
@@ -61,7 +61,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 8. **读数纪律（第一嫌疑人是读数，不是程序）**：关键常量（密文/密钥/换表/魔数）的唯一权威读数 = `scripts/read_views.py` 三视图（hexdump + 带字节数的 fromhex-ready hex + cstr），读到立即 `ledger.py conclude` 锁定（注明地址+长度+工具）；**禁止从终端手工转录 hex**（可信度最低的通道不能承载最关键的事实）。反编译器/IDA 的字符串与 hex 渲染只是视图——会把 `0x01`/`0x0E` 渲染成 `1`/`E` 吞掉前导 0——凡要引用渲染文本，先 `read_views.py --expect-hex "<渲染文本>"` 与真实字节对照。观测矛盾（伪码声明长度 vs 实测处理长度、同一事实两次读出不同值、`strcmp` 对任何输入都不等）→ **先怀疑读数**：任何"这段逻辑是坏的/反的"的结论，必须先排除读数错误才允许提出；同一事实第二次读出不同结果 = 熔断信号，立即停止推断、用 read_views 建立权威读数。**求逆之前先正向验证**：拿到疑似密钥/密文后，先用已知输入把完整流水线正向跑一遍（`oracle.py` / `emulate-function`）确认模型能复现已知输出，再求逆——直接求逆错了也不知道错在哪。
 9. **缓冲区归属（字节是谁的）**：从 `MOV [EBP+disp], imm` 序列重建栈上字符串时，必须**按 disp 区间归属变量**，禁止按指令出现顺序拼接——相邻变量的写入区间相接（`end_A + 1 == start_B`）时极易把别人的字节拼进自己的常量（encode 复盘 E1：28 字节密文被读成 49 字符）。拼接结果 MUST `read_views.py --expect-len` 与该变量声明长度核对。任何常量长度不符合其用途（hex 必须偶数、base64 必须 4 的倍数、XOR/RC4 密文必须等于明文长度）→ **以「读数可疑」中止，禁止进入求逆**。机械门 = `scripts/crypto_sanity.py`：求逆前 MUST 过 `check`，求逆后 MUST 过 `check-result`——49 字符的 base64、28≠21 的密文、不可打印的反推结果都会被它 exit 2 拦下。
 10. **验证独立性（同源验证 = 没验证）**：用自己 patch 的进程、自己写的 harness、自己算的偏移来验证自己对程序的理解，三者一致不构成任何证据（encode 复盘 E2/E3）。① **被 patch 过的运行态只能用于探索控制流，禁止用于验证数据模型**——验证数据模型要求进程未修改（或修改点与测量点无数据依赖）+ 至少一个独立来源（静态常量/第二输入/已知明文）交叉印证；被迫在 patch 后测量的结论必须 `conclude --independent no` 标注。② **自建 harness（投喂/读数脚本）在支撑结论前必须用已知答案的输入自检**；自检失败或结果不稳定 → 该 harness 全部输出作废；「偶发命中」必须复跑 ≥100 次确认可复现才算发现。③ `ledger.py conclude` 强制标注 `--source`/`--independent`（self-script 必须给 `--harness` 路径），无独立来源的结论在 render 里标 ⚠UNVERIFIED，禁止原样交付。④ **否定性结论门槛更高**：说「不可满足/程序是坏的」之前，必须先用已知输入正向复现成功（铁律 8），且结论必须能指认一个「如果它错了，结论就崩」的外部事实——指认不出就不许交付。细则见 re-dynamic §4。
-11. **手写解析器必须双源验证（工具缺失 ≠ 自造轮子的许可证）**：自行实现的格式/字节码解析器（opcode 表、结构体偏移、指令解码、文件格式 parser），在据此下任何结论前，MUST 与第二个独立实现逐条比对至少一次——官方实现优先（SDK 自带工具），其次成熟第三方库；比对不上就装工具，装不了就标 ⚠UNVERIFIED（铁律 10③）禁止交付。**「输出看起来合理」不构成正确性证据**——表偏移类错误恰恰只产生语法合法、语义自洽、看似合理的输出（五题复盘：DEX opcode 表在 0x2d 多塞一个条目，`if-lt` 被读成 `if-ne`，标准 ROT13 显示成残废实现，差点自信交付）。同类事故的已知偏移陷阱归档在 `references/windows-powershell.md` 之外的 PITFALLS 语义由本铁律覆盖：`pe_info.py` 的 PE32 ImageBase 偏移（opt+28 不是 opt+24）、AXML 字符串池偏移——手写同类代码前先把这些当自检清单过一遍。配套纪律：**oracle 必须成对**（证明「正确输入被接受」之外，必须给出「近似错值被拒绝」的负对照，否则无法排除「凡输入皆通过」）；**解空间可枚举时穷举优先于公式**（穷举同时产出答案与唯一性证明）。
+11. **手写解析器必须双源验证（工具缺失 ≠ 自造轮子的许可证）**：自行实现的格式/字节码解析器（opcode 表、结构体偏移、指令解码、文件格式 parser），在据此下任何结论前，MUST 与第二个独立实现逐条比对至少一次——官方实现优先（SDK 自带工具），其次成熟第三方库；比对不上就装工具，装不了就标 ⚠UNVERIFIED（铁律 10③）禁止交付。**「输出看起来合理」不构成正确性证据**——表偏移类错误恰恰只产生语法合法、语义自洽、看似合理的输出（五题复盘：DEX opcode 表在 0x2d 多塞一个条目，`if-lt` 被读成 `if-ne`，标准 ROT13 显示成残废实现，差点自信交付）。已知的静默偏移陷阱（手写同类代码前先当自检清单过一遍）：`scripts/pe_info.py` 的 **PE32 ImageBase**（PE32 在 opt+28，opt+24 是 BaseOfData；PE32+ 才在 opt+24）与 **PE32+ 导入 thunk 宽度**（8 字节 QWORD——按 4 字节读会撞上全零高半部，把导入列表静默截断成「每 DLL 1 个函数」）、AXML 字符串池偏移、DEX opcode 表条目数。配套纪律：**oracle 必须成对**（证明「正确输入被接受」之外，必须给出「近似错值被拒绝」的负对照，否则无法排除「凡输入皆通过」）；**解空间可枚举时穷举优先于公式**（穷举同时产出答案与唯一性证明）。
 
 ## 2. 快速上手（3 行）
 
@@ -185,6 +185,7 @@ export JAVA_HOME="C:/Java"
 | `crypto_sanity.py` | **铁律 9 求逆闸门**：`check`（常量长度/格式合法性：hex 偶数、base64 %4、流密码等长）+ `check-result`（反推结果可打印性/格式），违规 exit 2 禁止求逆 |
 | `launch_gui.py` | detached 拉起 Ghidra GUI，可直接打开项目 |
 | `doctor.py` | 环境自检（8 项：安装/JDK/双 venv/工作区/项目/rpc 包/daemon 起停），全绿 exit 0 |
+| `pe_info.py` ◈ | PE 分诊：头/节表/熵/导入表/资源；PE32 与 PE32+ 双路径（ImageBase 与导入 thunk 宽度都按位数分派）。`python pe_info.py <exe>` |
 
 ### 第 3 层：legacy（冻结备查，被 rpc 取代）
 

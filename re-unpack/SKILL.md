@@ -1,6 +1,6 @@
 ---
 name: re-unpack
-description: 对已确认或疑似加壳的二进制执行脱壳与验证：UPX/ASPack/Themida/VMProtect/MPRESS，PE/ELF，多层。触发：triage 检出壳、熵高、节名 UPX/.aspack/.vmp、导入表异常干净。只做脱壳与脱壳成功验证——脱完回 re-triage 重新分诊，不做内容分析。
+description: 对已确认或疑似加壳的二进制执行脱壳与验证（unpacking / deobfuscation）：UPX/ASPack/Themida/VMProtect/MPRESS，PyInstaller 解包反编译（pyc/decompile），PE/ELF，多层壳。触发：triage 检出壳、熵高、节名 UPX/.aspack/.vmp、导入表异常干净。只做脱壳与脱壳成功验证——脱完回 re-triage 重新分诊，不做内容分析。
 whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导入表只剩 LoadLibrary/GetProcAddress）、需要脱壳或验证脱壳产物时；多层壳、IAT 重建、脱壳失败换后路
 ---
 

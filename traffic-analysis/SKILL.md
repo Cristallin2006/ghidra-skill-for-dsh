@@ -1,6 +1,6 @@
 ---
 name: traffic-analysis
-description: CTF 流量分析与网络取证：pcap 分诊、DNS/ICMP/TCP 隐信道与隧道重组、USB HID 键鼠抓包还原、WPA/TLS 解密、文件与凭据提取。触发：流量/pcap/抓包/Wireshark/网络取证/流量包/隐蔽信道/隧道。不做二进制逆向——那是 ghidra-static 系；提取出的文件需逆向时回 re-triage。
+description: CTF 流量分析与网络取证（pcap / network forensics）：pcap 分诊、DNS/ICMP/TCP 隐信道与隧道重组（covert channel / tunneling）、USB HID 键鼠抓包还原、WPA/TLS 解密、文件与凭据提取。触发：流量/pcap/抓包/Wireshark/tshark/网络取证/流量包/隐蔽信道/隧道。不做二进制逆向——那是 ghidra-static 系；提取出的文件需逆向时回 re-triage。
 whenToUse: 拿到 pcap/pcapng 要分析时；DNS 隧道、ICMP/时序/TCP flag 隐信道、USB HID 键盘鼠标抓包、802.11 eapol/WPA 解密、TLS keylog 解密、--export-objects 文件提取、明文凭据收割
 ---
 
@@ -51,7 +51,7 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 | TLS 密文 + 附件有 keylog/私钥/coredump | `references/wifi-tls.md` §TLS |
 | HTTP/SMB/FTP 明文传文件 | `references/pcap-triage.md` §文件提取 |
 | FTP/Telnet/HTTP Basic/NTLM 认证流量 | `references/pcap-triage.md` §凭据 |
-| 协议分布全正常、内容全噪声 | 元数据直方图：`timing_decode.py --mode len` / `--mode byte --offset N`（TTL=IP+8，IPID=IP+4），方法论 `references/tunnels.md` §通用检测 |
+| 协议分布全正常、内容全噪声 | 元数据直方图：`timing_decode.py --mode len` / `--mode byte --offset N`（TTL=IP+8，TOS=IP+1；**IPID 是 16 位大端，`--offset` 只读 1 字节 → 高字节 IP+4 恒为 0、低字节 IP+5**），方法论 `references/tunnels.md` §通用检测 |
 
 ### 4. 证据落账（强制）
 
@@ -67,8 +67,8 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 |---|---|
 | `scripts/pcap_triage.py` | 开局分诊（零依赖）；某协议占比 >60% exit 2 并给路由 hint |
 | `scripts/hid_keyboard.py` | usbhid.data hex 行 → 还原文本（内置完整 HID 键码表+Shift 映射，--lines 跟踪方向键分行） |
-| `scripts/mouse_render.py` | HID 鼠标/数位板位移 → 累加轨迹 → PGM 图（纯 stdlib；--png 需 PIL） |
-| `scripts/dnscat2_reassemble.py` | DNS 查询名列表 → 去 9 字节头/去重传 → 重组 payload |
+| `scripts/mouse_render.py` | HID 鼠标/数位板位移 → 累加轨迹 → PGM 图（纯 stdlib；输出是 `<out>_mode<N>.pgm` 不是 `<out>.pgm`；`--png` 需 PIL——**venv 里没有 PIL、PATH 上的 python 3.10 才有**，缺了自动降级只出 PGM） |
+| `scripts/dnscat2_reassemble.py` | DNS 查询名列表 → 去 9 字节头/去重传 → 重组 payload（缺省只自动猜 **2 级**隧道域名；3 级以上必须显式 `--domain`，否则静默猜错成 `example.com`） |
 | `scripts/timing_decode.py` | 时序分档/包长/单字节字段 → bit/字节 → ASCII 渲染 |
 
 ## References

@@ -1,6 +1,6 @@
 ---
 name: vuln-audit
-description: 按清单系统性排查二进制漏洞模式：内存破坏、格式化字符串、整数溢出、命令注入、危险 API 组合。触发：漏洞审计、找漏洞、pwn 攻击面梳理、fuzz 前目标筛选。是 checklist 知识层——具体命令见 ghidra-core。
+description: 按清单系统性排查二进制漏洞模式（vulnerability audit / pwn 预筛）：内存破坏、格式化字符串、整数溢出、命令注入、危险 API 组合。触发：漏洞审计、找漏洞、pwn 攻击面梳理、fuzz 前目标筛选、SRC 静态预筛。是 checklist 知识层——具体命令见 ghidra-core。
 whenToUse: 对二进制做漏洞模式排查、pwn 攻击面梳理、fuzz 目标筛选、SRC/漏洞挖掘前期的静态预筛；crackme 之外的"它有没有病"类问题
 ---
 
