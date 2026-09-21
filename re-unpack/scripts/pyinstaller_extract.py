@@ -39,17 +39,27 @@ for _s in (sys.stdout, sys.stderr):
     _s.reconfigure(encoding="utf-8", errors="replace")
 
 HOME = Path(os.path.expanduser("~"))
-PYINSTXTRACTOR = HOME / "Desktop" / "src" / "tools" / "pyinstxtractor" / "pyinstxtractor.py"
-VENV_SCRIPTS = HOME / "Desktop" / "src" / "re-tools-venv" / "Scripts"
-VENV_PY = VENV_SCRIPTS / "python.exe"
+_IS_NT = os.name == "nt"
+if _IS_NT:
+    PYINSTXTRACTOR = HOME / "Desktop" / "src" / "tools" / "pyinstxtractor" / "pyinstxtractor.py"
+    VENV_SCRIPTS = HOME / "Desktop" / "src" / "re-tools-venv" / "Scripts"
+    _EXE = ".exe"
+    _PY = "python.exe"
+else:  # WSL/Linux 部署
+    PYINSTXTRACTOR = HOME / "tools" / "pyinstxtractor" / "pyinstxtractor.py"
+    VENV_SCRIPTS = HOME / "re-tools-venv" / "bin"
+    _EXE = ""
+    _PY = "python"
+VENV_PY = VENV_SCRIPTS / _PY
 # 这两个包没有 __main__（python -m 不可行），必须走 venv 的 console script
 DECOMPILERS = {
-    "uncompyle6": VENV_SCRIPTS / "uncompyle6.exe",
-    "decompyle3": VENV_SCRIPTS / "decompyle3.exe",
+    "uncompyle6": VENV_SCRIPTS / f"uncompyle6{_EXE}",
+    "decompyle3": VENV_SCRIPTS / f"decompyle3{_EXE}",
 }
-PYCDC_CANDIDATES = [
+PYCDC_CANDIDATES = ([
     HOME / "Desktop" / "src" / "tools" / "pycdc" / "pycdc.exe",
     HOME / "Desktop" / "src" / "tools" / "pycdc.exe",
+] if _IS_NT else []) + [
     shutil.which("pycdc") or "",
 ]
 
@@ -191,10 +201,15 @@ def _win_to_wsl(p: str) -> str:
 
 
 def find_pycdc() -> tuple[str, str] | None:
-    """返回 (mode, ref)：mode='win' ref=exe 路径；mode='wsl' 走 WSL 的 pycdc。"""
+    """返回 (mode, ref)：mode='win' ref=exe 路径；mode='wsl' 走 WSL 的 pycdc。
+    Linux 下 pycdc 原生可用，只走直接调用（等价 'win' 分支）。"""
     for c in PYCDC_CANDIDATES:
         if c and Path(c).is_file():
             return ("win", str(c))
+    if not _IS_NT and shutil.which("pycdc"):
+        return ("win", shutil.which("pycdc"))
+    if not _IS_NT:
+        return None
     r = run_cmd(["wsl", "-d", "Ubuntu", "-u", "root", "--",
                  "bash", "-lc", "command -v pycdc"], timeout=30)
     if r["returncode"] == 0 and r["stdout"]:

@@ -48,9 +48,9 @@ def main() -> int:
     try:
         install = driver._configure_environment()
         ws = driver.workspace()
-        ghidra_run = install / "ghidraRun.bat"
+        ghidra_run = install / ("ghidraRun.bat" if os.name == "nt" else "ghidraRun")
         if not ghidra_run.is_file():
-            emit({"status": "error", "error": f"ghidraRun.bat not found at {ghidra_run}"},
+            emit({"status": "error", "error": f"ghidraRun launcher not found at {ghidra_run}"},
                  out_path)
             return 1
 

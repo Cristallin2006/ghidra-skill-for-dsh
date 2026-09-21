@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,7 +27,8 @@ from pathlib import Path
 import pefile
 
 UPX_MAGIC = b"UPX!"
-DEFAULT_UPX = os.path.expanduser("~/Desktop/src/tools/upx/upx.exe")
+DEFAULT_UPX = (os.path.expanduser("~/Desktop/src/tools/upx/upx.exe") if os.name == "nt"
+               else (shutil.which("upx") or "/usr/bin/upx"))
 
 
 def section_header_base(pe: pefile.PE) -> int:

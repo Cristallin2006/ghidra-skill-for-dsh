@@ -111,3 +111,25 @@ WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`�
 | GOOMBA | 实为 **Hex-Rays IDA 插件**（HexRaysSA/goomba），不是 Ghidra 插件；本机无 IDA 许可 | SiMBA（Tier B 已装）覆盖 MBA 化简 |
 | golang-loader | 上游仅 Jython 时代脚本源码、无 release、Ghidra 12.1 未验证 | GoReSym（Tier A）覆盖 Go 符号/字符串主场景 |
 | unipacker 64 位支持 | Unipacker 仅 PE32（架构限制） | 64 位 Themida 走 qiling 档 |
+
+## WSL/Linux 部署（2026-09-21 起，与 Windows 并行；同一仓库 skill 双平台分支）
+
+DSH 已迁移一套到 WSL Ubuntu（root），Windows 侧原样保留。skill 脚本按 `os.name`/`sys.platform` 自动分支，本节是 WSL 侧常量表。机器可读探测：WSL 里跑同一个 `doctor.py`（自动选用 TOOL_REGISTRY_LINUX）。
+
+| 类别 | Windows | WSL/Linux |
+|---|---|---|
+| Node / dsh | `C:\Program Files\nodejs`（npm 全局） | `/opt/node24`（v24.21.0，npmmirror 手动解包，软链 /usr/local/bin），dsh 0.1.5-rc.2 |
+| dsh 配置 | `C:\Users\Lenovo\.dsh` | `/root/.dsh`（skills+settings+credentials 已拷；sessions/plugins 不带） |
+| Ghidra | `C:\t001s\ghidra_12.1.3_PUBLIC...` | `/opt/ghidra`（同一份目录拷入 ext4，882M） |
+| JDK | `C:\Java`（Java 25） | `/usr/lib/jvm/java-21-openjdk-amd64`（apt openjdk-21-jdk-headless） |
+| 引擎 venv | `~/Desktop/src/ghidra-bridge/ghidra-rpc-venv` | `~/ghidra-rpc-venv`（editable engine 安装） |
+| legacy venv | `~/Desktop/src/ghidra-bridge/pyghidra-venv` | `~/pyghidra-venv`（pyghidra 3.1.0） |
+| re-tools venv | `~/Desktop/src/re-tools-venv` | `~/re-tools-venv`（同包集，除 pywin32/simba 占位包） |
+| unpacker venv | `~/Desktop/src/unpacker-venv` | `~/unpacker-venv`（源码克隆 `/root/unpacker-src`） |
+| pwn venv | WSL `/root/re-pwn-venv`（间接） | `/root/re-pwn-venv`（原生，gdb/pwndbg/pwntools/qiling/ROPgadget 等） |
+| 工具目录 | `~/Desktop/src/tools/` | `~/tools/`（goresym、jadx、pyinstxtractor） |
+| 系统工具 | tools/ 下 .exe 或 WSL 间接调用 | apt 原生直达：file/upx/gdb/strings/readelf/qemu/tshark/editcap/adb/pycdc/aircrack-ng/hashcat/one_gadget/seccomp-tools |
+| Ghidra 工作区 | `~/.dsh/ghidra-workspace`（junction `~/dsh-ghidra-workspace`） | 同路径结构，junction 变为 symlink（driver.py 自动处理） |
+| Windows-only 不可用项 | — | win_gui_drive.py、pywin32、Android SDK/emulator（真机 oracle 回 Windows 侧做）、dnSpyEx/de4dot/DIE/x64dbg |
+
+已知差异：simba-simplifier 在 Windows 侧装的是 PyPI 占位包（0.0.1 无功能），doctor 的 import 探测为假阳性；WSL 注册表已不含此项。真 SiMBA 需从源码装（未做，MBA 化简暂走 manual/angr）。

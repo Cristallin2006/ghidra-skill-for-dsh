@@ -29,9 +29,17 @@ def check(label, ok, detail=""):
 # Single source of truth for external-tool availability across the skill
 # family.  kind: "path" (explicit file), "which" (PATH lookup), "pyimport"
 # (import probe inside the re-tools venv python).
-_RE_TOOLS = Path.home() / "Desktop" / "src" / "re-tools-venv" / "Scripts"
-_TOOLS_DIR = Path.home() / "Desktop" / "src" / "tools"
-_UNP_VENV = Path.home() / "Desktop" / "src" / "unpacker-venv" / "Scripts"
+_IS_NT = os.name == "nt"
+_IS_LINUX = sys.platform.startswith("linux")
+if _IS_NT:
+    _RE_TOOLS = Path.home() / "Desktop" / "src" / "re-tools-venv" / "Scripts"
+    _TOOLS_DIR = Path.home() / "Desktop" / "src" / "tools"
+    _UNP_VENV = Path.home() / "Desktop" / "src" / "unpacker-venv" / "Scripts"
+else:  # WSL/Linux 部署：venv 在 $HOME 下，系统工具走 apt/PATH
+    _RE_TOOLS = Path.home() / "re-tools-venv" / "bin"
+    _TOOLS_DIR = Path.home() / "tools"
+    _UNP_VENV = Path.home() / "unpacker-venv" / "bin"
+_VENV_PY = "python.exe" if _IS_NT else "python"
 
 
 _WSL_PY_VENV = "/root/re-pwn-venv"  # WSL Ubuntu 内的 pwn venv
@@ -56,7 +64,7 @@ def _probe(entry):
         return bool(found), found or f"{entry.exe} not on PATH"
     if kind == "pyimport":
         venv = Path(entry.venv) if getattr(entry, "venv", None) else _RE_TOOLS
-        py = venv / "python.exe"
+        py = venv / _VENV_PY
         if not py.is_file():
             return False, f"venv missing ({py})"
         proc = subprocess.run(
@@ -65,7 +73,15 @@ def _probe(entry):
         ok = proc.returncode == 0
         return ok, f"module {entry.module} in {venv.parent.name}: {'ok' if ok else proc.stderr.strip()[:120]}"
     if kind == "wsl":
-        # entry.cmd runs inside `wsl -d Ubuntu -u root bash -lc`
+        # entry.cmd runs inside `wsl -d Ubuntu -u root bash -lc` on Windows.
+        # On Linux the "WSL tools" ARE the native tools — run the same probe
+        # directly so the registry entries work unchanged on both platforms.
+        if _IS_LINUX:
+            proc = subprocess.run(["bash", "-lc", entry.cmd],
+                                  capture_output=True, text=True, timeout=60)
+            ok = proc.returncode == 0
+            out = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+            return ok, "native: " + (out[0][:120] if out else entry.cmd)
         if not _wsl_ok():
             return False, "WSL distro Ubuntu not available"
         proc = subprocess.run(["wsl", "-d", "Ubuntu", "-u", "root", "-e",
@@ -284,6 +300,140 @@ TOOL_REGISTRY = [
 ]
 
 
+# ── Linux/WSL registry ────────────────────────────────────────────────────────
+# Same truth-source role as TOOL_REGISTRY, selected when running on Linux.
+# Windows-only GUI/Android-SDK entries are omitted; "wsl" kind probes run
+# natively (see _probe), so their cmd bodies are shared verbatim.
+TOOL_REGISTRY_LINUX = [
+    # ── Tier A ──
+    _Tool(name="file", tier="A", kind="which", exe="file",
+          refs="re-triage（判型第一步）", hint="apt install file"),
+    _Tool(name="checksec", tier="A", kind="path",
+          path=str(_RE_TOOLS / "checksec"), refs="re-triage",
+          hint="pip install checksec.py（进 re-tools-venv）"),
+    _Tool(name="goresym", tier="A", kind="path",
+          path=str(_TOOLS_DIR / "goresym" / "goresym"), refs="re-triage",
+          hint="github.com/mandiant/GoReSym release linux amd64 解压到 ~/tools/goresym/"),
+    _Tool(name="pyinstxtractor", tier="A", kind="path",
+          path=str(_TOOLS_DIR / "pyinstxtractor" / "pyinstxtractor.py"), refs="re-triage",
+          hint="github.com/extremecoders-re/pyinstxtractor 单文件拷到 ~/tools/pyinstxtractor/"),
+    _Tool(name="frida", tier="A", kind="path",
+          path=str(_RE_TOOLS / "frida"),
+          refs="ghidra-core/ghidra-static/vuln-audit/re-unpack",
+          hint="pip install frida-tools（进 re-tools-venv）"),
+    _Tool(name="z3", tier="A", kind="pyimport", module="z3",
+          refs="ghidra-static（ctf-patterns/anti-analysis）",
+          hint="pip install z3-solver（进 re-tools-venv）"),
+    _Tool(name="rust-demangler", tier="A", kind="pyimport", module="rust_demangler",
+          refs="re-triage", hint="pip install rust-demangler（进 re-tools-venv）"),
+    _Tool(name="upx", tier="A", kind="which", exe="upx", refs="re-triage/re-unpack",
+          hint="apt install upx-ucl"),
+    _Tool(name="unpacker", tier="A", kind="path",
+          path=str(_UNP_VENV / "unpacker"), refs="re-unpack",
+          hint="python3 -m venv ~/unpacker-venv && pip install -e <Unpacker 克隆>"),
+    _Tool(name="jadx", tier="A", kind="path",
+          path=str(_TOOLS_DIR / "jadx" / "bin" / "jadx"), refs="android-re",
+          hint="github.com/skylot/jadx release zip 解压到 ~/tools/jadx/"),
+    _Tool(name="adb", tier="A", kind="which", exe="adb",
+          refs="android-re（安装/驱动）", hint="apt install adb"),
+    _Tool(name="javac", tier="A", kind="which", exe="javac",
+          refs="android-re（反编译结果编译执行 = 执行级 oracle）",
+          hint="apt install openjdk-21-jdk-headless"),
+    _Tool(name="androguard", tier="A", kind="pyimport", module="androguard",
+          refs="android-re（DEX 解析 + DAD，交叉验证用）",
+          hint="pip install androguard（进 re-tools-venv）"),
+    _Tool(name="uncompyle6", tier="A", kind="pyimport", module="uncompyle6",
+          refs="re-triage（PyInstaller pyc 反编译，CPython ≤3.8）",
+          hint="pip install uncompyle6（进 re-tools-venv）"),
+    _Tool(name="decompyle3", tier="A", kind="pyimport", module="decompyle3",
+          refs="re-triage（PyInstaller pyc 反编译备选）",
+          hint="pip install decompyle3（进 re-tools-venv）"),
+    _Tool(name="capstone", tier="A", kind="pyimport", module="capstone",
+          refs="ghidra-static/自写脚本（反汇编库）",
+          hint="pip install capstone（进 re-tools-venv）"),
+    _Tool(name="unicorn", tier="A", kind="pyimport", module="unicorn",
+          refs="re-dynamic/re-unpack（CPU 仿真库）",
+          hint="pip install unicorn（进 re-tools-venv）"),
+    _Tool(name="lief", tier="A", kind="pyimport", module="lief",
+          refs="re-triage/自写脚本（PE/ELF/DEX 解析库）",
+          hint="pip install lief（进 re-tools-venv）"),
+    # ── Tier B ──
+    _Tool(name="angr", tier="B", kind="pyimport", module="angr",
+          refs="ghidra-static/re-triage/vuln-audit",
+          hint="pip install angr（进 re-tools-venv）"),
+    _Tool(name="speakeasy", tier="B", kind="pyimport", module="speakeasy",
+          refs="（仿真备选）",
+          hint="pip install speakeasy-emulator setuptools<81（进 re-tools-venv）"),
+    _Tool(name="unipacker", tier="B", kind="pyimport", module="unipacker",
+          venv=str(_UNP_VENV), refs="re-unpack",
+          hint='pip install "unpacker[unipacker]"（进 unpacker-venv）'),
+    _Tool(name="ghidriff", tier="B", kind="path",
+          path=str(_RE_TOOLS / "ghidriff"),
+          refs="ghidra-core（references/headless.md §8）",
+          hint="pip install ghidriff（进 re-tools-venv）"),
+    _Tool(name="strings", tier="B", kind="which", exe="strings",
+          refs="re-triage（strings -el 补宽字符）", hint="apt install binutils"),
+    _Tool(name="readelf", tier="B", kind="which", exe="readelf",
+          refs="re-triage/ghidra-static（ELF 分析）", hint="apt install binutils"),
+    _Tool(name="gdb", tier="B", kind="which", exe="gdb",
+          refs="ghidra-static/re-triage（动态调试）", hint="apt install gdb"),
+    _Tool(name="pwntools", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/pwn && {_WSL_PY_VENV}/bin/pwn version",
+          refs="ghidra-static（pwn 脚本骨架）",
+          hint="python3 -m venv ~/re-pwn-venv && pip install pwntools"),
+    _Tool(name="ROPgadget", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/ROPgadget && {_WSL_PY_VENV}/bin/ROPgadget --version",
+          refs="ghidra-static（ROP 链）", hint="~/re-pwn-venv pip install ROPgadget"),
+    _Tool(name="ropper", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/ropper && {_WSL_PY_VENV}/bin/ropper --version",
+          refs="ghidra-static（ROP 链备选）", hint="~/re-pwn-venv pip install ropper"),
+    _Tool(name="one_gadget", tier="B", kind="wsl",
+          cmd="command -v one_gadget", refs="ghidra-static（libc 一把梭）",
+          hint="gem install one_gadget（需 ruby-full）"),
+    _Tool(name="seccomp-tools", tier="B", kind="wsl",
+          cmd="command -v seccomp-tools", refs="ghidra-static（沙箱规则分析）",
+          hint="gem install seccomp-tools"),
+    _Tool(name="pwndbg/gef", tier="B", kind="wsl",
+          cmd="test -f /root/.gdbinit && grep -q -e pwndbg -e gef /root/.gdbinit",
+          refs="ghidra-static（gdb 增强）",
+          hint="pwndbg git clone+setup.sh，或 gef 单脚本"),
+    _Tool(name="qiling", tier="B", kind="wsl",
+          cmd=f"test -x {_WSL_PY_VENV}/bin/python && {_WSL_PY_VENV}/bin/python -c 'import qiling'",
+          refs="ghidra-static/re-triage/re-unpack（免疫反调试仿真）",
+          hint="~/re-pwn-venv pip install qiling + rootfs ~/qiling-rootfs"),
+    _Tool(name="qemu", tier="B", kind="which", exe="qemu-system-x86_64",
+          refs="re-triage（固件/异架构）", hint="apt install qemu-system-x86"),
+    _Tool(name="pycdc", tier="B", kind="which", exe="pycdc",
+          refs="re-unpack（py>=3.9 的 pyc 反编译）",
+          hint="源码构建 zrax/pycdc（cmake+g++），产物 cp 到 /usr/local/bin"),
+    _Tool(name="scapy", tier="B", kind="pyimport", module="scapy",
+          refs="traffic-analysis（pcap 脚本化解析）",
+          hint="pip install scapy（进 re-tools-venv）"),
+    _Tool(name="tshark", tier="B", kind="which", exe="tshark",
+          refs="traffic-analysis（协议分层统计/-z conv/--export-objects）",
+          hint="apt install tshark"),
+    _Tool(name="editcap", tier="B", kind="which", exe="editcap",
+          refs="traffic-analysis（pcapng→pcap 转换）",
+          hint="apt install wireshark-common"),
+    _Tool(name="aircrack-ng", tier="B", kind="which", exe="aircrack-ng",
+          refs="traffic-analysis（WPA 握手破解/airdecap 二次分析）",
+          hint="apt install aircrack-ng"),
+    _Tool(name="hashcat", tier="B", kind="which", exe="hashcat",
+          refs="traffic-analysis（NTLMv2 -m 5600 / WPA -m 22000）",
+          hint="apt install hashcat"),
+    # ── Tier C ──
+    _Tool(name="apktool", tier="C", kind="which", exe="apktool",
+          refs="android-re（资源/Manifest 完整还原+回编译）",
+          hint="apt install apktool 或官方 wrapper jar"),
+    _Tool(name="baksmali", tier="C", kind="which", exe="baksmali",
+          refs="android-re（smali 反汇编/回汇编，改 dex 用）",
+          hint="github.com/baksmali/smali release jar + wrapper 脚本"),
+    _Tool(name="frida-server-android", tier="C", kind="which", exe="frida-server-android-NOT-INSTALLED",
+          refs="android-re（模拟器/真机内 Java 层 hook）",
+          hint="frida release android-x86_64 版，版本必须与 host frida 严格一致"),
+]
+
+
 def main() -> int:
     out_path = None
     if len(sys.argv) > 1 and sys.argv[1].startswith("@"):
@@ -294,8 +444,8 @@ def main() -> int:
     # 1. Ghidra install + launchers
     try:
         install = driver._configure_environment()
-        headless = install / "support" / "analyzeHeadless.bat"
-        gui = install / "ghidraRun.bat"
+        headless = install / "support" / ("analyzeHeadless.bat" if _IS_NT else "analyzeHeadless")
+        gui = install / ("ghidraRun.bat" if _IS_NT else "ghidraRun")
         ok = headless.is_file() and gui.is_file()
         results.append(check("ghidra_install", ok,
                              f"install={install} headless={headless.is_file()} "
@@ -309,7 +459,7 @@ def main() -> int:
     try:
         install = install or driver._configure_environment()
         java_home = os_environ_java()
-        java_exe = Path(java_home) / "bin" / "java.exe" if java_home else None
+        java_exe = Path(java_home) / "bin" / ("java.exe" if _IS_NT else "java") if java_home else None
         if java_exe and java_exe.is_file():
             proc = subprocess.run([str(java_exe), "-version"],
                                   capture_output=True, text=True, timeout=30)
@@ -323,8 +473,9 @@ def main() -> int:
         results.append(check("java", False, str(exc)))
 
     # 3. pyghidra venv
-    venv_python = Path.home() / "Desktop" / "src" / "ghidra-bridge" / \
-        "pyghidra-venv" / "Scripts" / "python.exe"
+    venv_python = (Path.home() / "Desktop" / "src" / "ghidra-bridge" /
+                   "pyghidra-venv" / "Scripts" / "python.exe") if _IS_NT else \
+        (Path.home() / "pyghidra-venv" / "bin" / "python")
     if not venv_python.is_file():
         results.append(check("pyghidra_venv", False,
                              f"venv python not found at {venv_python}"))
@@ -364,8 +515,9 @@ def main() -> int:
         results.append(check("projects", False, str(exc)))
 
     # 6. ghidra-rpc venv (engine environment)
-    rpc_venv_python = Path.home() / "Desktop" / "src" / "ghidra-bridge" / \
-        "ghidra-rpc-venv" / "Scripts" / "python.exe"
+    rpc_venv_python = (Path.home() / "Desktop" / "src" / "ghidra-bridge" /
+                       "ghidra-rpc-venv" / "Scripts" / "python.exe") if _IS_NT else \
+        (Path.home() / "ghidra-rpc-venv" / "bin" / "python")
     if not rpc_venv_python.is_file():
         results.append(check("rpc_venv", False,
                              f"venv python not found at {rpc_venv_python}"))
@@ -423,7 +575,7 @@ def main() -> int:
     # The single source of truth for tool availability. Tier A missing = warn
     # (never fails the run; only Ghidra-core failures do). Tier B/C missing =
     # informational "not installed (按需)".
-    toolchain = [t.check() for t in TOOL_REGISTRY]
+    toolchain = [t.check() for t in (TOOL_REGISTRY_LINUX if _IS_LINUX else TOOL_REGISTRY)]
     tier_a = [t for t in toolchain if t["tier"] == "A"]
     tier_b = [t for t in toolchain if t["tier"] == "B"]
     tier_c = [t for t in toolchain if t["tier"] == "C"]

@@ -14,7 +14,10 @@ whenToUse: 静态分析卡住要运行时事实时；验证 check 函数/算法�
 
 ```bash
 ORACLE="$HOME/.dsh/skills/re-dynamic/scripts/oracle.py"
-# 后端：WSL Ubuntu qiling（/root/re-pwn-venv，rootfs /root/qiling-rootfs，均已装）
+# 后端：qiling（Windows 走 WSL Ubuntu /root/re-pwn-venv；WSL/Linux 下同一 venv 原生可用，
+# rootfs /root/qiling-rootfs，均已装）
+# re-tools venv：Windows ~/Desktop/src/re-tools-venv/Scripts/python.exe；Linux ~/re-tools-venv/bin/python
+# win_gui_drive.py 为 Windows-only；frida_time_hook.py 双平台
 ```
 
 ## 1. 直接运行（第一选择，最便宜）

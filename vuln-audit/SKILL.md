@@ -14,7 +14,9 @@ whenToUse: 对二进制做漏洞模式排查、pwn 攻击面梳理、fuzz 目标
 
 ```bash
 SK="$HOME/.dsh/skills/ghidra-core/scripts"     # 唯一代码家
+# Windows:
 RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
+# WSL/Linux: RPC="$HOME/ghidra-rpc-venv/bin"
 ```
 
 ## 审计流程

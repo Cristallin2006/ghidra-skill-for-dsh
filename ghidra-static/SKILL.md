@@ -20,7 +20,9 @@ whenToUse: 已知样本类型后的静态分析：反编译指定函数、追数
 
 ```bash
 SK="$HOME/.dsh/skills/ghidra-core/scripts"     # 唯一代码家
+# Windows:
 RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
+# WSL/Linux: RPC="$HOME/ghidra-rpc-venv/bin"
 ```
 
 所有命令形如 `python "$SK/rpc_driver.py" <命令> <binary> [参数]`，参数细节一律见 **ghidra-core §5 能力清单**，本文件不重复。

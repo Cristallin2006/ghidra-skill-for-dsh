@@ -14,6 +14,14 @@ whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障�
 
 ## 0. 环境（本机已配好）
 
+> **WSL/Linux 部署的路径映射**（当 `uname` 是 Linux 时，本节常量按下表替换；脚本内部已自动按平台分支，此处供人工/排障参考）：
+> - `GHIDRA_HOME = /opt/ghidra`，JDK = `/usr/lib/jvm/java-21-openjdk-amd64`（apt openjdk-21）
+> - 引擎 venv = `~/ghidra-rpc-venv`（bin/python，无 .exe），legacy venv = `~/pyghidra-venv`
+> - re-tools venv = `~/re-tools-venv`，unpacker venv = `~/unpacker-venv`，pwn venv = `~/re-pwn-venv`
+> - 工具目录 = `~/tools/`（goresym、jadx、pyinstxtractor）；系统工具（file/upx/gdb/tshark/pycdc…）全在 PATH，直接裸名调用
+> - junction 在 Linux 是 symlink `~/dsh-ghidra-workspace`，语义相同
+> - `win_gui_drive.py`、pywin32、Android SDK/emulator 为 Windows-only，Linux 下不可用
+
 - `GHIDRA_HOME = C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC`（含 `support/` 的内层目录）
 - 执行引擎：**ghidra-rpc 常驻 daemon**（vendor 在 `engine/ghidra-rpc/`，上游 Cellebrite Labs 0.2.0 + dsh 补丁，见 `engine/VENDOR.md`）。统一入口 `scripts/rpc_driver.py`；GUI 用 `scripts/launch_gui.py`（见 §2「GUI」节）
 - **JDK 21+**（本机 `C:\Java`，Java 25），且必须是 JDK 而非 JRE——PyGhidra 通过 JPype 起 JVM

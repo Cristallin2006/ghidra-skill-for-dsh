@@ -14,8 +14,11 @@ whenToUse: 拿到 pcap/pcapng 要分析时；DNS 隧道、ICMP/时序/TCP flag �
 
 ```bash
 TA="$HOME/.dsh/skills/traffic-analysis/scripts"   # 本 skill 脚本（全零依赖，Python 3 stdlib）
+# Windows:
 TS="$HOME/Desktop/src/tools/wireshark/tshark.exe" # tshark 4.6.8（7z 免安装解包；未加 PATH，用全路径）
 EC="$HOME/Desktop/src/tools/wireshark/editcap.exe" # editcap（pcapng→pcap 转换）
+# WSL/Linux（apt 安装，PATH 直达）:
+# TS="$(command -v tshark)"; EC="$(command -v editcap)"
 ```
 
 本 skill 不依赖 tshark——`pcap_triage.py` 自研解析器保底；tshark/editcap/scapy/aircrack-ng/hashcat 是否可用以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core），缺失按 hint 装或绕。

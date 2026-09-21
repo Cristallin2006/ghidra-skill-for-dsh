@@ -44,8 +44,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analysis_config  # noqa: E402 - sibling module, path set above
 
-DEFAULT_GHIDRA = r"C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC"
-DEFAULT_JAVA_HOME = r"C:\Java"
+_IS_NT = os.name == "nt"
+DEFAULT_GHIDRA = r"C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC" if _IS_NT else "/opt/ghidra"
+DEFAULT_JAVA_HOME = r"C:\Java" if _IS_NT else "/usr/lib/jvm/java-21-openjdk-amd64"
+_JAVA_EXE = "java.exe" if _IS_NT else "java"
 DEFAULT_WS = Path(os.path.expanduser("~")) / ".dsh" / "ghidra-workspace"
 
 
@@ -55,7 +57,7 @@ def _configure_environment() -> Path:
     os.environ["GHIDRA_INSTALL_DIR"] = install
     if not os.environ.get("JAVA_HOME"):
         for candidate in (os.environ.get("PYGHIDRA_JAVA_HOME"), DEFAULT_JAVA_HOME):
-            if candidate and (Path(candidate) / "bin" / "java.exe").is_file():
+            if candidate and (Path(candidate) / "bin" / _JAVA_EXE).is_file():
                 os.environ["JAVA_HOME"] = candidate
                 break
     if not (Path(install) / "Ghidra").is_dir():
@@ -87,9 +89,18 @@ def project_root() -> Path:
     link_projects = link / "projects"
     if not link_projects.is_dir():
         if os.name != "nt":
-            link.mkdir(parents=True, exist_ok=True)
+            # symlink the workspace root so Ghidra never sees the ".dsh" element.
+            # NOTE: do NOT mkdir(link) first — that would create a real dir and
+            # the symlink branch below would never run (observed failure).
             try:
-                if not link.exists():
+                if link.is_symlink():
+                    if link.resolve() != ws.resolve():
+                        link.unlink()
+                        link.symlink_to(ws, target_is_directory=True)
+                elif link.is_dir():
+                    link.rmdir()  # only empty dirs: a stale mkdir artifact
+                    link.symlink_to(ws, target_is_directory=True)
+                elif not link.exists():
                     link.symlink_to(ws, target_is_directory=True)
             except OSError as exc:  # pragma: no cover - environment dependent
                 raise SystemExit(
@@ -270,7 +281,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     import subprocess
 
     install = Path(os.environ["GHIDRA_INSTALL_DIR"])
-    headless = install / "support" / "analyzeHeadless.bat"
+    headless = install / "support" / ("analyzeHeadless.bat" if _IS_NT else "analyzeHeadless")
     if not headless.is_file():
         raise SystemExit(f"headless launcher not found at {headless}")
 
@@ -352,7 +363,7 @@ def run_java_script(binary: Path, script: Path, script_args, name: str, read_onl
     import subprocess
 
     install = Path(os.environ["GHIDRA_INSTALL_DIR"])
-    headless = install / "support" / "analyzeHeadless.bat"
+    headless = install / "support" / ("analyzeHeadless.bat" if _IS_NT else "analyzeHeadless")
     if not headless.is_file():
         raise SystemExit(f"headless launcher not found at {headless}")
 

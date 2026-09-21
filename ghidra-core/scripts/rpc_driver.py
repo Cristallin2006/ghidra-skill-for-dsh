@@ -39,11 +39,16 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 HOME = Path(os.path.expanduser("~"))
-RPC_VENV_PYTHON = HOME / "Desktop" / "src" / "ghidra-bridge" / \
-    "ghidra-rpc-venv" / "Scripts" / "python.exe"
-GHIDRA_INSTALL = r"C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC"
-JAVA_HOME_DEFAULT = r"C:\Java"
-WS_LINK = HOME / "dsh-ghidra-workspace"  # junction -> ~/.dsh/ghidra-workspace
+if os.name == "nt":
+    RPC_VENV_PYTHON = HOME / "Desktop" / "src" / "ghidra-bridge" / \
+        "ghidra-rpc-venv" / "Scripts" / "python.exe"
+    GHIDRA_INSTALL = r"C:\t001s\ghidra_12.1.3_PUBLIC_20260817\ghidra_12.1.3_PUBLIC"
+    JAVA_HOME_DEFAULT = r"C:\Java"
+else:  # WSL/Linux 部署
+    RPC_VENV_PYTHON = HOME / "ghidra-rpc-venv" / "bin" / "python"
+    GHIDRA_INSTALL = "/opt/ghidra"
+    JAVA_HOME_DEFAULT = "/usr/lib/jvm/java-21-openjdk-amd64"
+WS_LINK = HOME / "dsh-ghidra-workspace"  # junction/symlink -> ~/.dsh/ghidra-workspace
 
 
 def configure_env() -> dict:

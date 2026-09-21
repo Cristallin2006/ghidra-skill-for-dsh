@@ -16,7 +16,10 @@ whenToUse: 收到未知二进制需要判断"这是什么、壳/语言/威胁面
 
 ```bash
 SK="$HOME/.dsh/skills/ghidra-core/scripts"     # 唯一代码家
+# Windows:
 RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
+# WSL/Linux:
+# RPC="$HOME/ghidra-rpc-venv/bin"
 ```
 
 > 路由表提到的外部工具（checksec/GoReSym/rustfilt 替代/dnSpyEx 等）是否已装：`python "$SK/doctor.py"` 的 toolchain 节为准；未装的按其 hint 装或走对应 skill 的失败阶梯。

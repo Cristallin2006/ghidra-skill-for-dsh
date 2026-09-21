@@ -13,6 +13,7 @@ whenToUse: 拿到 .apk/.dex 样本时；re-triage 判定"APK 不含 lib/（纯 D
 ## 路径约定
 
 ```bash
+# Windows:
 JADX="$HOME/Desktop/src/tools/jadx/bin/jadx.bat"              # jadx 1.5.6（第一反编译源）
 SDK="$LOCALAPPDATA/Android/Sdk"
 CT="$SDK/cmdline-tools/latest/bin"                            # apkanalyzer.bat / sdkmanager.bat / avdmanager.bat
@@ -21,6 +22,9 @@ EMU="$SDK/emulator/emulator.exe"
 BT="$SDK/build-tools/37.0.0"                                  # aapt2.exe / apksigner.bat / dexdump.exe
 AGPY="$HOME/Desktop/src/re-tools-venv/Scripts/python.exe"     # androguard 4.1.4（第二独立解析源）
 KS="$HOME/.android/debug.keystore"                            # 重签用（androiddebugkey / android，已存在）
+# WSL/Linux：
+# JADX="$HOME/tools/jadx/bin/jadx"; ADB="$(command -v adb)"; AGPY="$HOME/re-tools-venv/bin/python"
+# SDK/CT/EMU/BT/KS 无对应（Android SDK 模拟器为 Windows-only，真机 oracle 在 Windows 侧做）
 ```
 
 - system image **android-33 default x86_64 已装** → 真机 oracle 可立刻做（§3.2）

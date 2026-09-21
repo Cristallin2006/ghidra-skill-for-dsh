@@ -13,11 +13,17 @@ whenToUse: triage 确认或疑似加壳（节名 UPX/.aspack/.vmp、熵 >7、导
 ## 路径约定
 
 ```bash
+# Windows:
 UPX="$HOME/Desktop/src/tools/upx/upx.exe"                     # Tier A 原生 UPX
 UNP="$HOME/Desktop/src/unpacker-venv/Scripts"                 # Unpacker venv（Python 3.12, editable）
+# WSL/Linux:
+# UPX="$(command -v upx)"                                     # apt upx-ucl
+# UNP="$HOME/unpacker-venv/bin"
 RUP="$HOME/.dsh/skills/re-unpack/scripts"                     # 本 skill 的脱壳域脚本
 export PATH="$(dirname "$UPX"):$PATH"                          # Unpacker 靠 PATH 找原生 upx
 ```
+
+> Linux 下 `$UNP/unpacker.exe` → `$UNP/unpacker`、`$UNP/python.exe` → `$UNP/python`；pycdc 在 Linux 原生（/usr/local/bin/pycdc），脚本自动探测。
 
 本 skill 零 Ghidra 知识；脱壳产物进 Ghidra 的后续动作全部走 re-triage/ghidra-core。
 
