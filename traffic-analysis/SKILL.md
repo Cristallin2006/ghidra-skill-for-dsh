@@ -1,6 +1,6 @@
 ---
 name: traffic-analysis
-description: CTF 流量分析与网络取证（pcap / network forensics）：pcap 分诊、DNS/ICMP/TCP 隐信道与隧道重组（covert channel / tunneling）、USB HID 键鼠抓包还原、WPA/TLS 解密、文件与凭据提取。触发：流量/pcap/抓包/Wireshark/tshark/网络取证/流量包/隐蔽信道/隧道。不做二进制逆向——那是 ghidra-static 系；提取出的文件需逆向时回 re-triage。
+description: CTF 流量分析与网络取证（pcap / network forensics）：pcap 分诊、DNS/ICMP/TCP 隐信道与隧道重组（covert channel / tunneling）、USB HID 键鼠抓包还原、WPA/TLS 解密、文件与凭据提取。触发：流量/pcap/抓包/Wireshark/tshark/网络取证/流量包/隐蔽信道/隧道。不做二进制逆向——那是 ghidra-static 系；提取出的文件需逆向时回 re-triage。动手前必须先用 skill 工具加载本 skill 全文并遵守其流程；一切观察/结论用 ledger.py 落账。
 whenToUse: 拿到 pcap/pcapng 要分析时；DNS 隧道、ICMP/时序/TCP flag 隐信道、USB HID 键盘鼠标抓包、802.11 eapol/WPA 解密、TLS keylog 解密、--export-objects 文件提取、明文凭据收割
 ---
 

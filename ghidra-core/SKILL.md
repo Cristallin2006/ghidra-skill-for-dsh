@@ -1,6 +1,6 @@
 ---
 name: ghidra-core
-description: Ghidra headless 执行底座（execution engine）——rpc_driver/ghidra-rpc 命令、daemon 起停、doctor 环境自检、脚本清单。当需要实际运行任何 Ghidra 命令（import/decompile/disassemble/rename/patch/version-track）、环境排障、或其他逆向 skill 里的操作不知道具体命令时加载。不含分析方法论。
+description: Ghidra headless 执行底座（execution engine）——rpc_driver/ghidra-rpc 命令、daemon 起停、doctor 环境自检、脚本清单。当需要实际运行任何 Ghidra 命令（import/decompile/disassemble/rename/patch/version-track）、环境排障、或其他逆向 skill 里的操作不知道具体命令时加载。不含分析方法论。动手前必须先用 skill 工具加载本 skill 全文并遵守其流程；一切观察/结论用 ledger.py 落账。
 whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障、环境自检（doctor）、拉起 Ghidra GUI 时；re-triage/ghidra-static/vuln-audit 里的操作步骤缺少具体命令时
 ---
 

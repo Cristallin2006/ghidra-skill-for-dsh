@@ -58,6 +58,16 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 - **验证独立性**：结论强制独立来源，无则标 ⚠UNVERIFIED——Google P0 Naptime 的 Perfect Verification 原则
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做（ghidra-core/SKILL.md §8）
 
+## 准则强制层（dsh-hooks/，可选）
+
+catalog 只注入 skill 的 description，SKILL.md 正文和铁律不在上下文里——"AI 不遵守 skill 准则"多源于此。`dsh-hooks/` 用 dsh 内置的 hooks-claude-code 桥把关键纪律变成机械门：
+
+- **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（不依赖 agent 自觉读 SKILL.md）
+- **PreToolUse（Pwsh|Bash）**：对**无台账样本**的分析类直读（xxd/strings/objdump…）exit 2 阻断并给出流程指引；建台账后放行；pcap 修头等合法开局已豁免
+- **Stop 收尾检查**（stop_check.py）：默认停用，机制见 `dsh-hooks/README.md`
+
+安装：`dsh-hooks/` 拷到 `~/.dsh/hooks/`，在 profile 的 `cordis.patch.yml` 插入 hooks-claude-code 挂载条目（完整 YAML 与排障回滚见 `dsh-hooks/README.md`）。改动需**重启 dsh 服务 + 新开会话**生效。
+
 ## 许可与致谢
 
 本仓库代码以 [MIT](LICENSE) 发布。衍生自以下来源，感谢原作者：

@@ -1,6 +1,6 @@
 ---
 name: ghidra-static
-description: 对已建立基本认知的二进制做静态深挖（static analysis / reverse engineering）：反编译（decompile）、xref 追数据流、语义标注、patch 二进制、导出交付。触发：反编译某函数、提取算法/flag 逻辑、打补丁、批量导出伪码、CTF 逆向题主体攻坚。前提是已知样本类型——未知样本先走 re-triage。
+description: 对已建立基本认知的二进制做静态深挖（static analysis / reverse engineering）：反编译（decompile）、xref 追数据流、语义标注、patch 二进制、导出交付。触发：反编译某函数、提取算法/flag 逻辑、打补丁、批量导出伪码、CTF 逆向题主体攻坚。前提是已知样本类型——未知样本先走 re-triage。动手前必须先用 skill 工具加载本 skill 全文并遵守其流程；一切观察/结论用 ledger.py 落账。
 whenToUse: 已知样本类型后的静态分析：反编译指定函数、追数据流/调用链、还原算法或校验逻辑、语义化标注、patch 二进制、导出 patched 文件、CTF 逆向题主体攻坚
 ---
 
