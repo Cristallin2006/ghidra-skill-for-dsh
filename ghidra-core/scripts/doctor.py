@@ -290,7 +290,7 @@ TOOL_REGISTRY = [
           hint="github.com/x64dbg/x64dbg snapshot zip 解压（GUI 调试器）"),
     _Tool(name="GOOMBA", tier="C", kind="which", exe="GOOMBA-NOT-INSTALLED",
           refs="re-triage（references/anti-analysis.md MBA 化简）",
-          hint="不装：gooMBA 实为 Hex-Rays IDA 插件（HexRaysSA/goomba），本机无 IDA 许可；MBA 化简用 Tier B 的 SiMBA"),
+          hint="不装：gooMBA 实为 Hex-Rays IDA 插件（HexRaysSA/goomba），本机无 IDA 许可；MBA 化简走 manual/angr（SiMBA 的 PyPI 包是占位包）"),
     _Tool(name="golang-loader", tier="C", kind="which", exe="golang-loader-NOT-INSTALLED",
           refs="re-triage（Go 字符串恢复）",
           hint="不装：上游仅 Jython 时代脚本源码无 release；GoReSym（Tier A）已覆盖主场景"),
