@@ -66,3 +66,6 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 | `references/ctf-patterns.md` | CTF 模式库与 flag 狩猎启发式（XOR/期望值/oracle/自定义 VM/魔数/侧信道/动态工具选型） |
 | `references/go-binary.md` | triage 报 `lang_hints.go=true` 或发现 Go 指纹（pclntab/buildinfo/garble）时 |
 | `references/rust-binary.md` | triage 报 `lang_hints.rust=true` 或发现 Rust 特征串时 |
+| `references/cpp-binary.md` | C++ 样本：vtable/RTTI 恢复、this 指针类型化、STL 噪声过滤、MFC 消息映射 |
+| `references/classic-crypto.md` | 认出算法后的求逆执行：换表 base64/RC4/TEA 手撕、流水线求逆纪律（识别归 ghidra-core crypto-ident.md） |
+| `references/pwn-essentials.md` | 漏洞定位完成、要写 exp 时：checksec 打法树/ROP/libc 泄露/pwntools 骨架（WSL 工具链） |

@@ -29,6 +29,8 @@ wsl -d Ubuntu -- /mnt/c/.../sample          # ELF（含加壳判断后的产物�
 
 来源不明/疑似恶意的样本先评估再跑（快照 VM 更佳）；程序等输入就给输入，看输出猜结构。**观察到的每一个行为事实都用 ghidra-core `scripts/ledger.py observe` 回写台账**（机制见 ghidra-core references/evidence-ledger.md）。
 
+⚠️ **LD_PRELOAD 对静态链接样本完全失效**（encode 复盘 RETRO§3.2）：静态链接 ELF 没有动态符号解析，hook  libc 函数、伪造时间源、拦截 OpenSSL 全部不生效。先 `file` 确认链接方式；静态链接样本的替代通道：① 直接 patch 二进制（ghidra-core `patch_bytes`）；② oracle.py/qiling 的 syscall hook；③ Frida spawn 注入（不依赖动态链接）。不要在静态链接样本上调试"为什么 LD_PRELOAD 没反应"超过一轮。
+
 ## 2. 函数级 Oracle（oracle.py）
 
 给定二进制 + 函数地址（Ghidra listing 里的地址）+ 参数，真实调用该函数并返回 JSON（retval/stdout/regs/stop_reason）。CTF check 函数验证的标准动作：喂候选输入，看返回 0/1。
@@ -109,3 +111,4 @@ oracle 搭不起来（缺 stub/反仿真/地址算不对）→ 按阶梯升，**
 | 文件 | 何时读 |
 |---|---|
 | `references/js-antidebug.md` | CTF web/misc 遇到混淆 JS / 浏览器反调试时（混淆分类、反调试四件套中和模板、Node vm 沙箱脱 eval 链） |
+| `references/js-env-rebuild.md` | JS 肯跑之后的下一步：补环境最小 stub、webpack 抠模块、Node 本地复现并对照浏览器输出 |

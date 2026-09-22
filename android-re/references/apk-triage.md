@@ -86,21 +86,14 @@ EOF
 - **自有类为 0 的大 dex 直接跳过**；自有类 <20 个的 dex 优先人肉通读
 - 与 flag 全扫（§5）交叉：命中的字面量落在哪个 dex，就坐实了哪个 dex 是主战场
 
-## 5. flag 形态 regex 集
+## 5. flag 全扫（APK 扫描面）
 
-默认动作：**所有 dex + resources.arsc + assets 全扫**，不只扫 classes.dex。
+flag 形态 regex 集的权威源在 **re-triage `references/triage.md` §4**（标准/赛事前缀/裸 hex/MD5 形态），此处只记 APK 特有的**扫描面**：**所有 dex + resources.arsc + assets 全扫**，不只扫 classes.dex。dex 字符串是长度前缀 UTF-8，`grep -a` 可直接扫二进制：
 
 ```bash
 mkdir -p /tmp/apkx && unzip -o -q app.apk -d /tmp/apkx
 grep -aoE 'flag\{[^}]*\}|BJD\{[^}]*\}|CTF\{[^}]*\}|\{[0-9a-fA-F]{16,}\}' \
   /tmp/apkx/classes*.dex /tmp/apkx/resources.arsc 2>/dev/null | sort -u
 ```
-
-| 模式 | 覆盖 |
-|---|---|
-| `flag\{[^}]*\}` | 标准形态（大小写不敏感时加 `FLAG\{`、`Flag\{`，或直接 `grep -i`） |
-| `BJD\{[^}]*\}`、`CTF\{[^}]*\}` | 赛事自定义前缀；按赛事名再补一条 |
-| `\{[0-9a-fA-F]{16,}\}` | 裸 hex 花括号形态 |
-| `[0-9a-f]{32,64}` | 无包装的 MD5/SHA256 形态（dex 字符串是长度前缀 UTF-8，`grep -a` 可直接扫二进制） |
 
 扫不出 → flag 是**逐段拼接/变换**出来的，转 SKILL.md §2 校验点定位套路（找 `StringBuilder` append 链、xor/add 循环）。扫出多个 → 逐个过真机 oracle 正负对照。

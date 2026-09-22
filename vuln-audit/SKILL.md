@@ -48,3 +48,4 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 | 文件 | 何时读 |
 |---|---|
 | `references/vuln-patterns.md` | 漏洞模式检查项清单（识别信号/命令/判定标准/误报）——审计主文档 |
+| `references/patch-diff.md` | 有补丁前后两版二进制时：ghidriff/version-track 差分 → 根因反推 → PoC 思路（N-day） |

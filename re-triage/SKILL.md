@@ -73,12 +73,15 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 |---|---|
 | `go.buildid` / `runtime.gopanic` / 巨大静态二进制 | 先跑 GoReSym 恢复符号（stripped 也行）→ 只看 `main.*` 包函数；Go string 是 {ptr,len} 非 NUL 结尾，Ghidra 默认字符串分析会漏，装 golang-loader 插件或靠 xref。**深挖细节 → ghidra-static `references/go-binary.md`**（pclntab 版本指纹、garble/GoResolver、buildinfo 挖模块路径） |
 | `panicked at` / `_ZN` mangling / `.rustc` section | `strings \| grep panicked` 先挖源码路径行号；`rustfilt` demangle；泛型单态化 → 从字符串 xref 入手而非逐个函数。**深挖细节 → ghidra-static `references/rust-binary.md`**（panic 路径=源码地图、crate 依赖还原） |
-| `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
-| PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor / Pyarmor-Static-Unpack）再分析 pyc；opcode 重映射时 decompiler 报错即信号 |
+| `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot，全流程见 `references/dotnet-il.md`；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
+| PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor）再分析 pyc——**版本判定与反编译器选择矩阵见 `references/pyc-bytecode.md`**（≤3.8 uncompyle6/decompyle3，≥3.9 pycdc）；PyArmor 加密 code object → 转 re-dynamic |
 | UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
 | 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
 | APK | **先拆开看组成**：含 `lib/` 且逻辑在 so → 按 ABI 选 so（优先 x86_64）走 ghidra-static；**纯 DEX（无 lib/）→ `~/.dsh/skills/android-re`**（多 dex 启发式：真逻辑常在极小 dex；签名/debuggable 判定、flag 形态全扫见 android-re `references/apk-triage.md`）。JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
-| WASM / pyc / Mach-O / 内核 .ko / 固件 | 见 `references/triage.md` §平台速查 |
+| WASM / Mach-O / 内核 .ko | 见 `references/triage.md` §平台速查 |
+| pyc（裸字节码文件） | `references/pyc-bytecode.md`（magic→版本、反编译器矩阵、dis 兜底） |
+| 固件 / binwalk 类镜像 | `references/firmware.md`（判型/提取/架构识别/Ghidra 基址反推） |
+| OLLVM 混淆（bcf/fla/sub） | `references/ollvm-deobf.md`（工具选型决策表、手工 deflat、angr 化简）；识别原则仍在 `references/anti-analysis.md` §4 |
 | PE DOS stub 异常大 | 查 DOS stub 藏代码（`int 16h`），Windows 题常见 |
 
 ## 分诊判据细则
@@ -92,5 +95,9 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 
 | 文件 | 何时读 |
 |---|---|
-| `references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查 |
+| `references/triage.md` | 分诊细节：语言识别特征、壳检测、高危 API 组合、平台速查、flag 形态 regex 集（全家权威源） |
 | `references/anti-analysis.md` | 命中反调试/反混淆/自校验时的识别与绕过对照表 |
+| `references/dotnet-il.md` | 判出 .NET 后：de4dot 脱混淆、dnSpyEx 反编译/IL patch、混淆器对抗决策 |
+| `references/pyc-bytecode.md` | pyc/PyInstaller 样本：magic→版本判定、反编译器选择矩阵、PyArmor 识别 |
+| `references/firmware.md` | 固件镜像：binwalk/熵判型、文件系统提取、ARM/MIPS 基址反推导入 Ghidra |
+| `references/ollvm-deobf.md` | OLLVM 混淆的工具级执行：选型决策表、手工 deflat、claripy 化简 |

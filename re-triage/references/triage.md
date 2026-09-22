@@ -28,7 +28,7 @@
 | `mscoree.dll`、`_CorExeMain` | .NET | dnSpyEx + de4dot，**离开 Ghidra** |
 | 无 CLR 头但有 `System.Private.CoreLib` | NativeAOT | native，留在 Ghidra |
 | `global-metadata.dat` + libil2cpp | IL2CPP | native 部分在 Ghidra；元数据加密时 key=`SHA256(companyName+"\n"+productName)` |
-| `PYINSTALLER`、`PY`+六位数字 | Python 打包 | pyinstxtractor 解包 → pyc 反编译；Pyarmor 8/9 用 Pyarmor-Static-Unpack-1shot |
+| `PYINSTALLER`、`PY`+六位数字 | Python 打包 | pyinstxtractor 解包 → pyc 反编译（版本矩阵见 `pyc-bytecode.md`）；PyArmor 特征 → 转 re-dynamic 动态脱 |
 | 节名 `UPX0/UPX1` | UPX | `upx -d`；失败 = 元数据被篡改，对照 UPX 源码修头 |
 | 熵 > 7.5 + `.vmp0`/`.themida` | VMProtect/Themida | 不硬逆虚拟化：trace + 断点抓关键输入输出 |
 | WASM magic `\0asm` | WASM | wasm-decompile / wasm2wat，离开 Ghidra |
@@ -49,6 +49,17 @@ strings -el binary                      # Windows 宽字符（UTF-16），string
 
 Ghidra 侧：`strings <bin> "(?i)flag|correct"`（命令见 ghidra-core §5）配合 `xrefs-to` 拿引用者地址。
 
+### flag 形态 regex 集（全家权威源；APK 扫描面见 android-re apk-triage.md §5）
+
+| 模式 | 覆盖 |
+|---|---|
+| `flag\{[^}]*\}` | 标准形态（大小写不敏感时加 `FLAG\{`、`Flag\{`，或直接 `grep -i`） |
+| `BJD\{[^}]*\}`、`CTF\{[^}]*\}` | 赛事自定义前缀；按赛事名再补一条 |
+| `\{[0-9a-fA-F]{16,}\}` | 裸 hex 花括号形态 |
+| `[0-9a-f]{32,64}` | 无包装的 MD5/SHA256 形态 |
+
+扫不出 → flag 多半是**逐段拼接/变换**出来的，转校验点定位（找 append/xor/add 链，见 ghidra-static ctf-patterns.md §2）。扫出多个 → 逐个过 oracle 正负对照（铁律 11）。
+
 ## 5. 结构侦察清单
 
 - **PE**：TLS Directory `AddressOfCallBacks`（回调先于 main 执行，反调试常藏这里）；导入/导出表；`.rdata` 期望值表；DOS stub 异常大 → 查藏代码（`int 16h`）；Rich 头泄露编译器版本。
@@ -57,6 +68,7 @@ Ghidra 侧：`strings <bin> "(?i)flag|correct"`（命令见 ghidra-core §5）�
 
 ## 6. 壳处理与 IAT 修复铁律
 
+- **`lang_hints.upx=false` 不等于无壳**（encode 复盘 G1）：packheader 被篡改时启发式探测会漏报。节名异常/高熵/入口即解压循环任一命中，就按有壳处理——`upx -d` 试一下零成本，修头辅助见 re-unpack `scripts/upx_repair.py`。
 - x86 → ImportREC；x64 → Scylla（**禁止 64 位样本死磕 ImportREC**）。
 - 修复工具报错或修复后全乱码（VMP/加密壳）→ **立即停止静态死磕**，转动态：对敏感 API 下断点抓真实导入。
 - 脱壳后闪退/蓝屏 = 自校验（CRC over .text）→ 对 `CreateFile`/`GetFileSize`/哈希 API 下断。
