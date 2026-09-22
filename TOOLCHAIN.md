@@ -23,7 +23,6 @@
 | angr 9.3.4 | import `angr` | 符号执行/自动探路 | ghidra-static `simgr.explore`、vuln-audit 可达性、re-triage 静态死路兜底 |
 | speakeasy-emulator 1.5.11 | `Scripts/speakeasy.exe` | Windows 用户态仿真 | 仿真备选（壳/恶意样本快速行为预览）；Py3.12 需 setuptools<81 的 distutils shim |
 | ghidriff 1.0.0 | `Scripts/ghidriff.exe` | Ghidra headless 二进制 diff | ghidra-core headless.md §8 二进制比对补充（rpc 已内置 version-track） |
-| simba-simplifier 0.0.1 | import `simba_simplifier` | MBA 混淆化简（Ghidra 集成） | re-triage anti-analysis.md 的 MBA 对策 |
 
 注意：angr 把 z3-solver 钉到 4.13（从 5.1 降级，angr 的硬依赖约束）——两者共存无冲突。
 
@@ -108,7 +107,8 @@ WSL 用法：`wsl -d Ubuntu -u root -- <cmd>`；Windows 文件在 `/mnt/c/...`�
 
 | 工具 | 原因 | 替代 |
 |---|---|---|
-| GOOMBA | 实为 **Hex-Rays IDA 插件**（HexRaysSA/goomba），不是 Ghidra 插件；本机无 IDA 许可 | SiMBA（Tier B 已装）覆盖 MBA 化简 |
+| GOOMBA | 实为 **Hex-Rays IDA 插件**（HexRaysSA/goomba），不是 Ghidra 插件；本机无 IDA 许可 | MBA 化简走 manual/angr（见下行 SiMBA 说明） |
+| SiMBA（真身） | PyPI `simba-simplifier` 是占位包（0.0.1 无功能），真 SiMBA 需源码构建，未做 | manual/angr 符号执行 |
 | golang-loader | 上游仅 Jython 时代脚本源码、无 release、Ghidra 12.1 未验证 | GoReSym（Tier A）覆盖 Go 符号/字符串主场景 |
 | unipacker 64 位支持 | Unipacker 仅 PE32（架构限制） | 64 位 Themida 走 qiling 档 |
 
@@ -132,4 +132,4 @@ DSH 已迁移一套到 WSL Ubuntu（root），Windows 侧原样保留。skill �
 | Ghidra 工作区 | `~/.dsh/ghidra-workspace`（junction `~/dsh-ghidra-workspace`） | 同路径结构，junction 变为 symlink（driver.py 自动处理） |
 | Windows-only 不可用项 | — | win_gui_drive.py、pywin32、Android SDK/emulator（真机 oracle 回 Windows 侧做）、dnSpyEx/de4dot/DIE/x64dbg |
 
-已知差异：simba-simplifier 在 Windows 侧装的是 PyPI 占位包（0.0.1 无功能），doctor 的 import 探测为假阳性；WSL 注册表已不含此项。真 SiMBA 需从源码装（未做，MBA 化简暂走 manual/angr）。
+已知差异：simba-simplifier 的 PyPI 包是占位包（0.0.1 无功能），已从 Windows re-tools-venv 卸载，两侧 doctor 注册表均已移除该条目。真 SiMBA 需从源码装（未做，MBA 化简走 manual/angr）。

@@ -55,7 +55,7 @@ NtSetInformationThread  rdtsc  cpuid  GetTickCount  QueryPerformanceCounter
 (x ^ y) + (x & y)        == x | y
 ```
 
-- 工具：GOOMBA（Ghidra 插件，P-Code 级 MBA 化简：jar 拷进 Ghidra extensions → CodeBrowser Analysis → GOOMBA）；SiMBA（`pip install simba-simplifier`）；符号执行兜底（angr/Miasm）。
+- 工具：GOOMBA（Ghidra 插件，P-Code 级 MBA 化简：jar 拷进 Ghidra extensions → CodeBrowser Analysis → GOOMBA；⚠ 注意与 Hex-Rays IDA 的 goomba 区分）；SiMBA 的 PyPI 包 `simba-simplifier` 是占位包（0.0.1 无功能），**不要装**，真要用需从源码构建（当前未装）；符号执行兜底（angr/Miasm）。
 - Goron/Arkari 间接跳转变种：先试把数据段设只读再分析。
 
 ## 5. 动态交接原则（静态被反分析卡死时）
