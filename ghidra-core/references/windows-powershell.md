@@ -27,7 +27,23 @@
 
 下载 ~1GB 系统镜像、无头模拟器启动、`sdkmanager --list` 都可能超过默认超时 → **一律后台任务 + 输出落盘**，靠"只读可重试"判断是否安全重试，避免"中断后状态未知"。
 
-## 5. Git Bash 侧的两个补充
+## 5. 跨 shell 调用（Git Bash / WSL）
 
 - **Git Bash 会把 `/root/...` 这类参数转成 Windows 路径** → `wsl` 命令前必须 `export MSYS_NO_PATHCONV=1`。
 - Git Bash 的 `/tmp` 对 Windows 原生 python 不可见（它是 Bash 的虚拟挂载）→ 跨 shell 传文件用 `~/` 下的真实路径。
+- **`wsl -e bash -lc '...'` 内联时，载荷里的一层反斜杠会被吞掉**（实测隔离复现，与 printf 无关，是参数传递层）：
+
+  | 写法 | 实测 `od -c` | 结果 |
+  |---|---|---|
+  | `wsl -e bash -lc 'printf "A\nB" \| od -c'` | `A n B`（`41 6E 42`） | `\n` 变成字面量 `n` |
+  | `wsl -e bash -lc 'printf "A\\nB" \| od -c'` | `A \n B`（`41 0A 42`） | 加倍可得到真换行 |
+  | `wsl -e bash -lc 'printf "a\tb" \| od -c'` | `a t b` | `\t` 同样被吞 |
+
+  → **纪律同 §1 的 `python -c`：一律把载荷写成 `.sh` 文件再 `bash file.sh`**（实测同一 payload 从文件走就是真换行）。
+  本会话（本文档落地之后）正是被这条坑到：`printf 'DDDJJJBBBRRREEE\n'` 实际喂进去的是 `DDDJJJBBBRRREEn`，
+  程序正确地回了 `NO!NO!NO!`，**一度看起来像"flag 结论被推翻"**。是"正 + 负对照成对"的 oracle 把假警报拆掉的 ——
+  单看那一次输出会误判。
+- **从 Windows 侧写入的 `.sh` / `.txt` 是 CRLF**，bash 会报 `$'\r': command not found` 或用错值 →
+  执行前先 `sed -i 's/\r$//' <file>`。本会话每个脚本都跑过这一句，属固定动作而非偶发。
+- **WSL 默认只有 x86_64 运行库**：跑 32 位 ELF 前先 `dpkg --add-architecture i386 && apt-get update && apt-get install -y libc6:i386 libstdc++6:i386`，
+  否则 `/lib/ld-linux.so.2: No such file or directory`（`ldd` 还会误报 "not a dynamic executable"）。

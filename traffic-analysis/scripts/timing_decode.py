@@ -123,7 +123,9 @@ def main():
     ap.add_argument("--src")
     ap.add_argument("--dst")
     ap.add_argument("--offset", type=int, default=8,
-                    help="byte 模式：相对 IP 头的偏移（默认 8=TTL；IPID=4, TOS=1）")
+                    help="byte 模式：相对 IP 头的偏移，只读 1 字节 "
+                         "（默认 8=TTL；TOS=1；IPID 是 16 位大端 -> 高字节=4 恒为 0，"
+                         "低字节=5；TCP flags=IP头长+13）")
     ap.add_argument("--threshold", type=float, help="分档阈值（interval=秒；len/byte=数值）")
     ap.add_argument("--invert", action="store_true", help="bit 极性翻转")
     args = ap.parse_args()
