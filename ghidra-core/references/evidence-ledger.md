@@ -8,7 +8,7 @@
 | 文件 | 角色 | 维护方式 |
 |------|------|----------|
 | `<ws>/out/<样本名>.ledger.jsonl` | 机器真相（append-only，每行一条 JSON） | 只能由 ledger.py 追加 |
-| `<ws>/out/<样本名>.ledger.md` | 人读视图（三张表：权威结论/已踏勘区域/卡点） | 每次入账后自动重建，手工改动会被覆盖 |
+| `<ws>/out/<样本名>.ledger.md` | 人读视图（四张表：权威结论/已踏勘区域/卡点/异常） | 每次入账后自动重建，手工改动会被覆盖 |
 
 ## 命令
 
@@ -39,6 +39,18 @@ python "$LEDGER" conclude <binary> --conclusion-file c.txt --evidence-file e.txt
 # 卡点必记：断路器触发后，升级前先把「卡在哪、试过什么」留下来
 python "$LEDGER" stuck <binary> --at 0x140002000-0x140002040 \
   --tried "肉眼 hex,search_bytes" --escalate "确认是否 packed -> re-unpack"
+# 存在 open anomaly 时 stuck 被拒（exit 2）：要么 --ack 全部列出，要么先 resolve --waive
+python "$LEDGER" stuck <binary> --at 0x140002000 --tried "..." \
+  --escalate "..." --ack "A1,A3"
+
+# 异常落账（铁律 12）：观测到的不一致必须转成可检验假设，--consequence 必填
+python "$LEDGER" anomaly <binary> --region 0x140003000-0x140003040 \
+  --note "同一字段两次读出不同值" \
+  --consequence "若该字段是明文，则重复包取值必须一致"
+
+# 关闭异常：append-only，不改旧行；--note（如何解决）与 --waive（为何豁免）二选一
+python "$LEDGER" resolve <binary> --anomaly A1 --note "read_views 重读，第一次是渲染错位"
+python "$LEDGER" resolve <binary> --anomaly A2 --waive "需要 trace 工具，本机未装"
 
 # 总览（新会话接手旧样本的第一件事）/ 手动重建 md
 python "$LEDGER" status <binary>
@@ -70,6 +82,35 @@ python "$LEDGER" render <binary>
 ```
 
 exit 2 不是错误，是门。**正确处理是回答强制问题或升级，不是换措辞重试。**
+
+## 异常即约束（铁律 12 的机械执行）
+
+观测到的不一致**不许**在心里标注"噪声/歧义待枚举"然后继续——它必须立刻变成一条
+可检验的假设落账：`anomaly` 的 `--consequence` 必填，回答"**若该不一致成立，什么必须为假**"。
+没有 consequence 的"异常"只是感受，不是约束。
+
+**什么时候必须 anomaly**（命中其一即落账，不许掂量）：
+
+| 场景 | anomaly 示例 |
+|------|-------------|
+| 重复键冲突（同一键两个取值） | `--note "seq=0x10 的包 payload 两次不同" --consequence "若 payload 是明文，则同键取值必须一致"` |
+| 伪码声明长度 vs 实测处理长度不符 | `--note "伪码读 32 字节，实测处理 64" --consequence "若长度域是明文，则处理长度不能超过它"` |
+| 同一事实两次读数不同 | `--note "0x140003010 两次 read 值不同" --consequence "若该区域是 rodata，则两次读数必须一致"` |
+
+consequence 的写法要点：指向一个**可检验的外部事实**，形如
+"若该字段是明文，则重复包取值必须一致"——之后任何一次观测都能拿来证伪它。
+
+**与 stuck 的联动（机械门，不是建议）**：该二进制存在 open anomaly 时，`stuck` 直接
+exit 2 并打印全部 open 清单。两条出路：
+
+1. **明知未查** → `stuck --ack "A1,A3"` 把每个 open id 列出来（语义：我知道这些没查），
+   正常入账。ack 不全（漏 id、错 id）同样 exit 2。
+2. **工具缺失等客观不可查** → `resolve --waive "为何豁免"` 先豁免，不许硬卡。
+   waive 不是放弃：豁免理由落账，后来工具到位可随时再 anomaly 一次重新追。
+
+append-only 原则不变：`resolve` 不改 anomaly 旧行，只追加 `anomaly-resolve` 记录；
+open 状态由回放计算（有 anomaly 且无对应 resolve = open），`status`/`query` 输出
+`open_anomalies` 列表，render 的第四张表「异常（anomaly）」状态列齐全（open/resolved/waived）。
 
 ## 结论来源标注（铁律 10，conclude 强制字段）
 

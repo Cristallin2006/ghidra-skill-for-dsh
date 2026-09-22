@@ -18,9 +18,21 @@ Commands:
   observe  <binary> --region R --tool T --note N [--delta D]
   conclude <binary> --conclusion C --address A --evidence E \
            --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn]
-  stuck    <binary> --at R --tried "A,B" --escalate TARGET
+  anomaly  <binary> --region R --note N --consequence C
+  resolve  <binary> --anomaly ID (--note N | --waive W)
+  stuck    <binary> --at R --tried "A,B" --escalate TARGET [--ack "A1,A3"]
   status   <binary>
   render   <binary>
+
+Anomaly discipline (Iron Rule 12): an observed inconsistency MUST be booked
+as a testable hypothesis via `anomaly` (--consequence answers "if this holds,
+what else must be false"), never downgraded to "noise / ambiguity to be
+enumerated later". Anomalies stay `open` until a matching `resolve` entry
+(--note how it was resolved, or --waive why it is objectively unverifiable,
+e.g. missing tooling) is appended; old lines are never rewritten. While any
+anomaly is open, `stuck` is REFUSED (exit 2) unless --ack lists every open
+anomaly id ("I know these are unchecked") — ack or waive unblocks stuck, so
+missing tooling can never deadlock the loop.
 
 Long-text args (--conclusion/--evidence/--quote) accept a file instead:
 --conclusion-file F etc. (UTF-8). Use files from PowerShell 5.1 — embedded
@@ -46,6 +58,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -103,6 +116,38 @@ def load_entries(jsonl: Path) -> list[dict]:
 def append_entry(jsonl: Path, entry: dict) -> None:
     with jsonl.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def anomaly_resolves(entries: list[dict]) -> dict:
+    """anomaly_id -> 最新一条 anomaly-resolve（append-only，后者覆盖前者语义）。"""
+    out = {}
+    for e in entries:
+        if e.get("type") == "anomaly-resolve":
+            out[str(e.get("anomaly_id"))] = e
+    return out
+
+
+def open_anomalies(entries: list[dict]) -> list[dict]:
+    """open 状态由回放计算：有 anomaly 且无对应 anomaly-resolve = open。"""
+    resolved = anomaly_resolves(entries)
+    return [e for e in entries if e.get("type") == "anomaly"
+            and str(e.get("id")) not in resolved]
+
+
+def next_anomaly_id(entries: list[dict]) -> str:
+    """沿用 conclude 的「下一个空闲整数」风格，加 A 前缀避免与结论 id 混淆。"""
+    n = 0
+    for e in entries:
+        if e.get("type") == "anomaly":
+            m = re.match(r"^A(\d+)$", str(e.get("id", "")))
+            if m:
+                n = max(n, int(m.group(1)))
+    return f"A{n + 1}"
+
+
+def _anomaly_sort_key(aid: str):
+    m = re.match(r"^A(\d+)$", str(aid))
+    return (0, int(m.group(1))) if m else (1, str(aid))
 
 
 def parse_region(text: str):
@@ -224,7 +269,7 @@ def cmd_query(args) -> int:
     entries = load_entries(jsonl)
     result = {"ok": True, "ledger": str(jsonl), "md": str(md),
               "entries": len(entries), "observations": [], "conclusions": [],
-              "stucks": []}
+              "stucks": [], "open_anomalies": open_anomalies(entries)}
     if args.region:
         region = parse_region(args.region)
         result["observations"] = [
@@ -319,12 +364,82 @@ def cmd_conclude(args) -> int:
     return 0
 
 
+def cmd_anomaly(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    aid = next_anomaly_id(entries)
+    entry = {"type": "anomaly", "id": aid, "status": "open", "ts": now(),
+             "sha16": sha16(binary), "region": args.region.strip(),
+             "note": args.note.strip(),
+             "consequence": args.consequence.strip()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "id": aid, "status": "open",
+                      "ledger": str(jsonl)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_resolve(args) -> int:
+    binary = require_binary(args)
+    note = (args.note or "").strip()
+    waive = (args.waive or "").strip()
+    if bool(note) == bool(waive):
+        print(json.dumps({"ok": False,
+                          "error": "--note 与 --waive 二选一，必须且只能给一个"},
+                         ensure_ascii=False))
+        return 1
+    jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    aid = str(args.anomaly).strip()
+    target = next((e for e in entries if e.get("type") == "anomaly"
+                   and str(e.get("id")) == aid), None)
+    resolved = anomaly_resolves(entries)
+    if target is None or aid in resolved:
+        reason = "不存在" if target is None else f"已关闭（{resolved[aid]['status']}）"
+        opens = [str(e["id"]) for e in open_anomalies(entries)]
+        print(json.dumps({"ok": False,
+                          "error": f"anomaly {aid} {reason}，无法 resolve",
+                          "open_anomalies": opens}, ensure_ascii=False))
+        return 2
+    entry = {"type": "anomaly-resolve", "anomaly_id": aid,
+             "status": "waived" if waive else "resolved",
+             "note": waive or note, "ts": now()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "anomaly": aid, "status": entry["status"]},
+                     ensure_ascii=False))
+    return 0
+
+
 def cmd_stuck(args) -> int:
     binary = require_binary(args)
     jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    opens = open_anomalies(entries)
+    acknowledged = []
+    if opens:
+        need = sorted((str(e["id"]) for e in opens), key=_anomaly_sort_key)
+        ack = (args.ack or "").strip()
+        acked = {x.strip() for x in ack.split(",") if x.strip()}
+        if acked != set(need):
+            print(f"[异常未收口 · 铁律12] 该二进制有 {len(need)} 个 open anomaly，"
+                  "stuck 入账前必须全部确认：")
+            for e in opens:
+                print(f"  {e['id']} [{e['region']}] {e['note']}"
+                      f" —— 若成立则必须为假：{e['consequence']}")
+            print("二选一：")
+            print(f"  · 明知未查也要留卡点 -> 重新执行并加: --ack \"{','.join(need)}\""
+                  "（语义：我知道这些没查）")
+            print("  · 工具缺失等客观不可查 -> 先豁免，不许硬卡："
+                  "ledger.py resolve <binary> --anomaly <id> --waive \"为何豁免\"")
+            return 2
+        acknowledged = need
     entry = {"type": "stuck", "ts": now(), "sha16": sha16(binary),
              "at": args.at.strip(), "tried": args.tried.strip(),
              "escalate": args.escalate.strip()}
+    if acknowledged:
+        entry["acknowledged_anomalies"] = acknowledged
     append_entry(jsonl, entry)
     auto_render(binary)
     print(json.dumps({"ok": True, "recorded": True,
@@ -345,6 +460,7 @@ def cmd_status(args) -> int:
         "observations": len(obs),
         "conclusions": len([e for e in entries if e.get("type") == "conclude"]),
         "stucks": [e for e in entries if e.get("type") == "stuck"],
+        "open_anomalies": open_anomalies(entries),
         "revisit_hotspots": {r: n for r, n in sorted(hot.items(),
                              key=lambda kv: -kv[1]) if n >= 2},
     }, ensure_ascii=False, indent=2))
@@ -401,7 +517,22 @@ def render(binary: Path) -> Path:
               "| 卡点 | 已试路径 | 升级去向 | 时间 |",
               "|------|---------|----------|------|"]
     for e in stucks:
-        lines.append(f"| {e['at']} | {e['tried']} | {e['escalate']} | {e['ts']} |")
+        ack = f"（ack: {','.join(e['acknowledged_anomalies'])}）" \
+            if e.get("acknowledged_anomalies") else ""
+        lines.append(f"| {e['at']} | {e['tried']} | {e['escalate']}{ack} | {e['ts']} |")
+    resolves = anomaly_resolves(entries)
+    anoms = [e for e in entries if e.get("type") == "anomaly"]
+    lines += ["", "## 异常（anomaly）",
+              "| id | 状态 | 区域 | 观测到的不一致 | 若成立则必须为假 | 解决/豁免 | 时间 |",
+              "|----|------|------|---------------|-----------------|---------|------|"]
+    for e in sorted(anoms, key=lambda x: _anomaly_sort_key(x.get("id"))):
+        r = resolves.get(str(e.get("id")))
+        status = r["status"] if r else "open"
+        how = r["note"].replace("\n", " ⏎ ") if r else "—"
+        lines.append(f"| {e['id']} | {status} | {e['region']} "
+                     f"| {e['note'].replace(chr(10), ' ⏎ ')} "
+                     f"| {e['consequence'].replace(chr(10), ' ⏎ ')} "
+                     f"| {how} | {e['ts']} |")
     lines.append("")
     md.write_text("\n".join(lines), encoding="utf-8")
     return md
@@ -451,11 +582,28 @@ def main() -> int:
     p.add_argument("--overturn", action="store_true")
     p.set_defaults(fn=cmd_conclude)
 
-    p = sub.add_parser("stuck", help="卡点必记")
+    p = sub.add_parser("anomaly", help="异常落账（铁律 12：不一致必须转成可检验假设，--consequence 必填）")
+    p.add_argument("binary")
+    p.add_argument("--region", required=True)
+    p.add_argument("--note", required=True, help="观测到的不一致")
+    p.add_argument("--consequence", required=True,
+                   help="若该不一致成立，什么必须为假（可检验的推论）")
+    p.set_defaults(fn=cmd_anomaly)
+
+    p = sub.add_parser("resolve", help="关闭异常：--note 如何解决 / --waive 为何豁免（二选一）")
+    p.add_argument("binary")
+    p.add_argument("--anomaly", required=True, help="anomaly id（A1、A2…）")
+    p.add_argument("--note", help="如何解决的")
+    p.add_argument("--waive", help="为何豁免（工具缺失等客观不可查）")
+    p.set_defaults(fn=cmd_resolve)
+
+    p = sub.add_parser("stuck", help="卡点必记（存在 open anomaly 时必须 --ack 全部列出）")
     p.add_argument("binary")
     p.add_argument("--at", required=True)
     p.add_argument("--tried", required=True)
     p.add_argument("--escalate", required=True)
+    p.add_argument("--ack", help="逗号分隔的全部 open anomaly id（\"A1,A3\"），"
+                                 "语义：我知道这些没查")
     p.set_defaults(fn=cmd_stuck)
 
     p = sub.add_parser("status", help="台账总览 + 回访热点")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""pcap_triage.py - 纯 stdlib 的 pcap 开局分诊：协议分布 / 包长直方图 / top 会话对。
+"""pcap_triage.py - 纯 stdlib 的 pcap 开局分诊：协议分布 / 包长直方图 / top 会话对 / 每流字段一致性矩阵。
 
 只解析经典 pcap；pcapng 请先转换：  editcap -F pcap in.pcapng out.pcap
 （或 tshark -r in.pcapng -w out.pcap）
@@ -15,7 +15,7 @@ import argparse
 import json
 import struct
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -82,6 +82,33 @@ def parse_ipv4(pkt: bytes):
     return proto, src, dst, sport, dport, l4_payload
 
 
+def tcp_tsval(l4: bytes):
+    """解析 TCP TS option（kind 8, len 10），返回 tsval 或 None。"""
+    if len(l4) < 20:
+        return None
+    off = (l4[12] >> 4) * 4
+    if off < 20 or off > len(l4):
+        return None
+    opts = l4[20:off]
+    i = 0
+    while i < len(opts):
+        kind = opts[i]
+        if kind == 0:
+            return None
+        if kind == 1:
+            i += 1
+            continue
+        if i + 1 >= len(opts):
+            return None
+        ln = opts[i + 1]
+        if ln < 2 or i + ln > len(opts):
+            return None
+        if kind == 8 and ln == 10:
+            return struct.unpack(">I", opts[i + 2:i + 6])[0]
+        i += ln
+    return None
+
+
 def dns_qname_len(udp_payload: bytes) -> int:
     """DNS 查询名 wire 长度（含长度字节），解析失败返回 0。"""
     if len(udp_payload) < 13:
@@ -124,6 +151,7 @@ def triage(path: str):
     lens = Counter()
     max_qname = 0
     eapol_hits = 0
+    flow_pkts = defaultdict(list)  # TCP 会话 -> [(seq, payload, tsval, ttl, ipid, win, incl)]
 
     off = 24
     while off + 16 <= len(data):
@@ -150,6 +178,7 @@ def triage(path: str):
                 eapol_hits += 1
         else:
             l3 = None
+            ip_bytes = None
             if linktype == 1 and len(pkt) >= 14:  # Ethernet
                 et = struct.unpack(">H", pkt[12:14])[0]
                 base = 14
@@ -157,16 +186,33 @@ def triage(path: str):
                     et = struct.unpack(">H", pkt[16:18])[0]
                     base = 18
                 if et == 0x0800:
-                    l3 = parse_ipv4(pkt[base:])
+                    ip_bytes = pkt[base:]
+                    l3 = parse_ipv4(ip_bytes)
                 elif et == 0x0806:
                     service = "ARP"
             elif linktype == 101:  # RAW
-                l3 = parse_ipv4(pkt)
+                ip_bytes = pkt
+                l3 = parse_ipv4(ip_bytes)
             elif linktype == 113 and len(pkt) >= 16:  # Linux SLL
                 if struct.unpack(">H", pkt[14:16])[0] == 0x0800:
-                    l3 = parse_ipv4(pkt[16:])
+                    ip_bytes = pkt[16:]
+                    l3 = parse_ipv4(ip_bytes)
             if l3:
                 proto, src, dst, sport, dport, l4_payload = l3
+                if proto == 6 and sport and dport and ip_bytes:
+                    ihl = (ip_bytes[0] & 0x0F) * 4
+                    l4 = ip_bytes[ihl:]
+                    if len(l4) >= 20:
+                        a, b = f"{src}:{sport}", f"{dst}:{dport}"
+                        flow_pkts[tuple(sorted((a, b)))].append((
+                            struct.unpack(">I", l4[4:8])[0],          # seq
+                            bytes(l4_payload),                        # payload
+                            tcp_tsval(l4),                            # tsval（无 TS option 为 None）
+                            ip_bytes[8],                              # ttl
+                            struct.unpack(">H", ip_bytes[4:6])[0],    # ipid
+                            struct.unpack(">H", l4[14:16])[0],        # window
+                            incl,
+                        ))
                 if proto == 1:
                     service = "ICMP"
                 elif proto in (6, 17):
@@ -198,7 +244,44 @@ def triage(path: str):
         "protos": protos, "proto_bytes": proto_bytes, "convs": convs,
         "top_dports": top_dports, "len_hist": lens,
         "max_qname_len": max_qname, "eapol_hits": eapol_hits,
+        "flow_pkts": flow_pkts,
     }
+
+
+def flow_consistency(flow_pkts, top_n: int = 5, min_pkts: int = 8):
+    """每流字段变异性 + 重复键冲突检测（纯追加分析，不影响 exit 码）。"""
+    out = []
+    for conv, recs in sorted(flow_pkts.items(), key=lambda kv: -len(kv[1])):
+        if len(recs) < min_pkts:
+            continue
+        fields = {
+            "ttl": [r[3] for r in recs],
+            "ipid": [r[4] for r in recs],
+            "window": [r[5] for r in recs],
+            "len": [r[6] for r in recs],
+            "pay0": [(r[1][0] if r[1] else None) for r in recs],
+            "tsval.lo": [(r[2] & 0xF if r[2] is not None else None) for r in recs],
+        }
+        stats = {}
+        for name, vals in fields.items():
+            u = len(set(vals))
+            cls = "constant" if u == 1 else ("low-entropy" if u <= 4 else "variable")
+            stats[name] = (u, cls)
+        seq_conf = 0
+        by_seq = defaultdict(set)
+        for r in recs:
+            by_seq[r[0]].add(r[1])
+        seq_conf = sum(1 for v in by_seq.values() if len(v) > 1)
+        by_idx = defaultdict(set)
+        for r in recs:
+            if r[2] is not None:
+                by_idx[(r[2] >> 8) & 0xFF].add(r[2] & 0xF)
+        idx_conf = sum(1 for v in by_idx.values() if len(v) > 1)
+        out.append({"conv": conv, "packets": len(recs), "stats": stats,
+                    "seq_conflicts": seq_conf, "tsval_idx_conflicts": idx_conf})
+        if len(out) >= top_n:
+            break
+    return out
 
 
 def render(r, min_packets: int) -> int:
@@ -239,11 +322,25 @@ def render(r, min_packets: int) -> int:
         hints.insert(0, f"【信号载体】{dominant} 占比 {dominant_pct:.1f}% -> " + ROUTE_HINTS[dominant])
     if not hints:
         hints.append("协议分布无明显异常 -> 元数据直方图法找隐写："
-                     "timing_decode.py --mode len / --mode byte --offset N（TTL=IP+8, IPID=IP+4），"
+                     "timing_decode.py --mode len / --mode byte --offset N"
+                     "（TTL=IP+8, TOS=IP+1；IPID 16 位大端 -> 高字节 IP+4/低字节 IP+5），"
                      "方法论见 references/tunnels.md #通用检测")
     print("\n-- 路由 hint --")
     for h in hints:
         print(f"  * {h}")
+
+    fc = flow_consistency(r["flow_pkts"])
+    if fc:
+        print("\n-- 每流字段一致性矩阵（top TCP 流，包数 ≥8） --")
+        for row in fc:
+            a, b = row["conv"]
+            print(f"  {a} <-> {b}  ({row['packets']} 包)")
+            for name, (u, cls) in row["stats"].items():
+                print(f"    {name:<9} unique={u:>3}  {cls}")
+            if row["seq_conflicts"] or row["tsval_idx_conflicts"]:
+                print(f"    ⚠ 重复键冲突（同 seq 载荷不同 ×{row['seq_conflicts']}，"
+                      f"同 (tsval>>8)&0xff 低半字节冲突 ×{row['tsval_idx_conflicts']}）"
+                      " → 复合值候选，走 conflict_oracle.py")
 
     if dominant_pct > 60 and total >= min_packets:
         print(f"\n[GATE] {dominant} 占比 {dominant_pct:.1f}% > 60%（exit 2）", file=sys.stderr)
@@ -263,6 +360,15 @@ def main():
     if args.json:
         out = {k: (dict(v) if isinstance(v, Counter) else v) for k, v in r.items()}
         out["convs"] = {f"{a} <-> {b}": c for (a, b), c in r["convs"].items()}
+        out["flow_consistency"] = [
+            {"conv": f"{row['conv'][0]} <-> {row['conv'][1]}",
+             "packets": row["packets"],
+             "stats": {n: {"unique": u, "class": c} for n, (u, c) in row["stats"].items()},
+             "seq_conflicts": row["seq_conflicts"],
+             "tsval_idx_conflicts": row["tsval_idx_conflicts"]}
+            for row in flow_consistency(r["flow_pkts"])
+        ]
+        del out["flow_pkts"]
         with open(args.json.lstrip("@"), "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
     sys.exit(rc)

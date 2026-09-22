@@ -9,7 +9,7 @@ whenToUse: 需要执行 Ghidra 命令、查命令参数、daemon 起停/排障�
 唯一的代码与命令知识层。场景 skill（re-triage / ghidra-static / vuln-audit）只含方法论，具体命令一律回本文件查。
 
 - 场景路由：未知样本分诊 → `~/.dsh/skills/re-triage`；脱壳与验证 → `~/.dsh/skills/re-unpack`；静态深挖/patch/交付 → `~/.dsh/skills/ghidra-static`；漏洞模式排查 → `~/.dsh/skills/vuln-audit`
-- 本 skill 内容：§0 环境 / §1 十条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
+- 本 skill 内容：§0 环境 / §1 十三条铁律 / §2 快速上手（含长任务、GUI、doctor）/ §4 legacy 裸命令 / §5 能力清单（三层）/ §7 移植坑 / §8 能力边界
 - engine 内部补丁细节不在本文件：见 `engine/VENDOR.md`
 
 ## 0. 环境（本机已配好）
@@ -54,7 +54,7 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 上游 19 个 + 本 skill 早期的 `triage_scan`/`decompile_all` 共 21 个脚本已全部移植为 `@runtime PyGhidra` 并统一由 `driver.py` 启动（原 `run-headless.sh` 入口已废弃并删除，见 §2），此后又新增 4 个。**2026-09-15 起执行引擎迁移为 ghidra-rpc 常驻 daemon，这 25 个脚本冻结为 legacy 备查**（见 §5 第 3 层），`driver.py` 保留为 daemon 挂掉时的后路。
 
-## 1. 十一条铁律（先读这个再动手）
+## 1. 十三条铁律（先读这个再动手）
 
 1. **开工先 ensure；批量场景用批量工具**：daemon 温热后单次命令 ~0.2s，"一个函数一次调用"不再是罪。但全量反编译/全文搜索仍优先 `decompile-all` / `search-decompiled` 这类服务端批量工具——别 for 循环 1000 次单条 `decompile`（每条都要序列化过锁）。
 2. **导入分析一次做足**：`rpc_driver.py ensure` 的 load 只做一次全量分析；之后所有查询/写操作都打在同一个已分析程序上，不会重跑分析。
@@ -66,10 +66,12 @@ ghidra.app.script.JythonStubScriptProvider$JythonStubException:
 
 铁律 6 管时间（多久没进展就换路），铁律 7 管循环签名（ledger.py 机械拦截原地打转）——先命中哪条执行哪条。台账 = `<ws>/out/<名>.ledger.jsonl`（机器真相，append-only）+ 每次入账自动重建的 `<名>.ledger.md`（人读视图）：权威结论写入即锁定（同 id 覆盖必须 `--overturn`+新证据）、先查后析（`ledger.py query`）、推翻留痕——机制细节见 `references/evidence-ledger.md`。
 
-8. **读数纪律（第一嫌疑人是读数，不是程序）**：关键常量（密文/密钥/换表/魔数）的唯一权威读数 = `scripts/read_views.py` 三视图（hexdump + 带字节数的 fromhex-ready hex + cstr），读到立即 `ledger.py conclude` 锁定（注明地址+长度+工具）；**禁止从终端手工转录 hex**（可信度最低的通道不能承载最关键的事实）。反编译器/IDA 的字符串与 hex 渲染只是视图——会把 `0x01`/`0x0E` 渲染成 `1`/`E` 吞掉前导 0——凡要引用渲染文本，先 `read_views.py --expect-hex "<渲染文本>"` 与真实字节对照。观测矛盾（伪码声明长度 vs 实测处理长度、同一事实两次读出不同值、`strcmp` 对任何输入都不等）→ **先怀疑读数**：任何"这段逻辑是坏的/反的"的结论，必须先排除读数错误才允许提出；同一事实第二次读出不同结果 = 熔断信号，立即停止推断、用 read_views 建立权威读数。**求逆之前先正向验证**：拿到疑似密钥/密文后，先用已知输入把完整流水线正向跑一遍（`oracle.py` / `emulate-function`）确认模型能复现已知输出，再求逆——直接求逆错了也不知道错在哪。
+8. **读数纪律（第一嫌疑人是读数，不是程序）**：关键常量（密文/密钥/换表/魔数）的唯一权威读数 = `scripts/read_views.py` 三视图（hexdump + 带字节数的 fromhex-ready hex + cstr），读到立即 `ledger.py conclude` 锁定（注明地址+长度+工具）；**禁止从终端手工转录 hex**（可信度最低的通道不能承载最关键的事实）。反编译器/IDA 的字符串与 hex 渲染只是视图——会把 `0x01`/`0x0E` 渲染成 `1`/`E` 吞掉前导 0——凡要引用渲染文本，先 `read_views.py --expect-hex "<渲染文本>"` 与真实字节对照。观测矛盾（伪码声明长度 vs 实测处理长度、同一事实两次读出不同值、`strcmp` 对任何输入都不等）→ **先怀疑读数**：任何"这段逻辑是坏的/反的"的结论，必须先排除读数错误才允许提出；同一事实第二次读出不同结果 = 熔断信号，立即停止推断、用 read_views 建立权威读数。**求逆之前先正向验证**：拿到疑似密钥/密文后，先用已知输入把完整流水线正向跑一遍（`oracle.py` / `emulate-function`）确认模型能复现已知输出，再求逆——直接求逆错了也不知道错在哪。字段/读数冲突时，在宣称"题目设计有矛盾"之前，必须先排除"该值是多字段复合函数"（如 tsval ^ payload ^ seq 片段）这一可能——同键冲突恰恰证明单字段不是明文。
 9. **缓冲区归属（字节是谁的）**：从 `MOV [EBP+disp], imm` 序列重建栈上字符串时，必须**按 disp 区间归属变量**，禁止按指令出现顺序拼接——相邻变量的写入区间相接（`end_A + 1 == start_B`）时极易把别人的字节拼进自己的常量（encode 复盘 E1：28 字节密文被读成 49 字符）。拼接结果 MUST `read_views.py --expect-len` 与该变量声明长度核对。任何常量长度不符合其用途（hex 必须偶数、base64 必须 4 的倍数、XOR/RC4 密文必须等于明文长度）→ **以「读数可疑」中止，禁止进入求逆**。机械门 = `scripts/crypto_sanity.py`：求逆前 MUST 过 `check`，求逆后 MUST 过 `check-result`——49 字符的 base64、28≠21 的密文、不可打印的反推结果都会被它 exit 2 拦下。
 10. **验证独立性（同源验证 = 没验证）**：用自己 patch 的进程、自己写的 harness、自己算的偏移来验证自己对程序的理解，三者一致不构成任何证据（encode 复盘 E2/E3）。① **被 patch 过的运行态只能用于探索控制流，禁止用于验证数据模型**——验证数据模型要求进程未修改（或修改点与测量点无数据依赖）+ 至少一个独立来源（静态常量/第二输入/已知明文）交叉印证；被迫在 patch 后测量的结论必须 `conclude --independent no` 标注。② **自建 harness（投喂/读数脚本）在支撑结论前必须用已知答案的输入自检**；自检失败或结果不稳定 → 该 harness 全部输出作废；「偶发命中」必须复跑 ≥100 次确认可复现才算发现。③ `ledger.py conclude` 强制标注 `--source`/`--independent`（self-script 必须给 `--harness` 路径），无独立来源的结论在 render 里标 ⚠UNVERIFIED，禁止原样交付。④ **否定性结论门槛更高**：说「不可满足/程序是坏的」之前，必须先用已知输入正向复现成功（铁律 8），且结论必须能指认一个「如果它错了，结论就崩」的外部事实——指认不出就不许交付。细则见 re-dynamic §4。
 11. **手写解析器必须双源验证（工具缺失 ≠ 自造轮子的许可证）**：自行实现的格式/字节码解析器（opcode 表、结构体偏移、指令解码、文件格式 parser），在据此下任何结论前，MUST 与第二个独立实现逐条比对至少一次——官方实现优先（SDK 自带工具），其次成熟第三方库；比对不上就装工具，装不了就标 ⚠UNVERIFIED（铁律 10③）禁止交付。**「输出看起来合理」不构成正确性证据**——表偏移类错误恰恰只产生语法合法、语义自洽、看似合理的输出（五题复盘：DEX opcode 表在 0x2d 多塞一个条目，`if-lt` 被读成 `if-ne`，标准 ROT13 显示成残废实现，差点自信交付）。已知的静默偏移陷阱（手写同类代码前先当自检清单过一遍）：`scripts/pe_info.py` 的 **PE32 ImageBase**（PE32 在 opt+28，opt+24 是 BaseOfData；PE32+ 才在 opt+24）与 **PE32+ 导入 thunk 宽度**（8 字节 QWORD——按 4 字节读会撞上全零高半部，把导入列表静默截断成「每 DLL 1 个函数」）、AXML 字符串池偏移、DEX opcode 表条目数。配套纪律：**oracle 必须成对**（证明「正确输入被接受」之外，必须给出「近似错值被拒绝」的负对照，否则无法排除「凡输入皆通过」）；**解空间可枚举时穷举优先于公式**（穷举同时产出答案与唯一性证明）。
+12. **异常即约束**：观测到的不一致（重复键冲突、伪码长度 vs 实测、同一事实两次读数不同）必须 `ledger.py anomaly --consequence "..."` 转成可检验假设落账，禁止降级为"噪声/歧义待枚举"；存在 open anomaly 时 stuck 必须 `--ack` 引用或先 `resolve --waive`；工具缺失导致的客观不可查走 waive，不许硬卡。
+13. **轴必须交叉（限枚举类解码/搜索任务）**：仅适用于候选空间可枚举的解码/搜索任务（隐信道解码、爆破类）——开跑前先出轴矩阵+候选预算（候选数 = Σ C（字段数，k) × 算子数 × 顺序源 × 打包 × 后变换）；预算算得出却仍剪轴必须写明理由；任一轴恒为 identity/常量 = 未覆盖，不得声称"试过"。与铁律 6 时间盒联动：预算 > 时间盒承受能力时升级方法（找 oracle/换数学洞察）而不是硬跑。**不适用于需要数学洞察的密码题——那里穷举是最后手段。**
 
 ## 2. 快速上手（3 行）
 
@@ -179,6 +181,7 @@ export JAVA_HOME="C:/Java"
 | `export-binary` ◆ | Original File 导出 + md5 对比 |
 | `emulate-function` ◆ | EmulatorHelper P-code 仿真（寄存器/内存预置，call-depth 追踪） |
 | `exec-code` + `scripts/unreferenced_funcs.py` ◆ | 零调用方函数清单（藏 flag 的第二函数）：`python rpc_driver.py [@out] exec-code <binary> "$SK/unreferenced_funcs.py"`；`--reachable-from <root>` 做可达性过滤——daemon 下脚本参数走 `DSH_UNREF_ARGS` 环境变量（须在 ensure/启动 daemon 前导出）；排除 thunk/external/entry-export 根 |
+| `exec-code` + `scripts/unreferenced_data.py` ◆ | 零引用数据块清单 + 置换/密钥材料分类 + 相邻块跨度合并（藏置换表/S-box）：`python rpc_driver.py exec-code <binary> "$SK/unreferenced_data.py"`；daemon 下脚本参数走 `DSH_UNREF_DATA_ARGS` 环境变量（须在 ensure/启动 daemon 前导出）；`--min-size <n>` 调阈值，`--include-referenced` 全量 |
 
 ◆ = dsh 自定义工具（`engine/ghidra-rpc/ghidra_rpc/server/tools/dsh_tools.py`）。✎ = 写操作。⚠ = 无沙箱。
 完整命令与参数：`~/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts/ghidra-rpc.exe --help`，或 `engine/ghidra-rpc/docs/` + `engine/ghidra-rpc/README.md`。

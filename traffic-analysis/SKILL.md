@@ -21,7 +21,7 @@ EC="$HOME/Desktop/src/tools/wireshark/editcap.exe" # editcap（pcapng→pcap 转
 # TS="$(command -v tshark)"; EC="$(command -v editcap)"
 ```
 
-本 skill 不依赖 tshark——`pcap_triage.py` 自研解析器保底；tshark/editcap/scapy/aircrack-ng/hashcat 是否可用以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core），缺失按 hint 装或绕。
+本 skill 不依赖 tshark——`pcap_triage.py` / `conflict_oracle.py` / `decode_engine.py` 自研解析器保底（全 stdlib）；tshark/editcap/scapy/aircrack-ng/hashcat 是否可用以 `python "$SK/doctor.py"` 的 toolchain 节为准（SK 路径见 ghidra-core），缺失按 hint 装或绕。ghidra-core 的 unreferenced_data.py / ledger.py 仅为路由引用，非本 skill 脚本的运行依赖。
 
 ## 流程
 
@@ -37,9 +37,33 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 "$TS" -r cap.pcap -q -z conv,ip           # 会话/端点
 ```
 
-- `pcap_triage.py` **exit 2 = 某协议占比 >60%**，直接跟它打印的路由 hint 走
+- `pcap_triage.py` **exit 2 = 某协议占比 >60%**，直接跟它打印的路由 hint 走；报告末尾的**每流字段一致性矩阵**打出 ⚠ 重复键冲突时，走 `conflict_oracle.py`（见 §2.5 异常即约束）
 - **大 pcap（百万包级）**：信号载体往往藏在包数最少的协议/会话里，按包数倒序找（EHAX 2026 经验）
 - pcapng 会被 pcap_triage 拒收：`"$EC" -F pcap in.pcapng out.pcap` 转换后再来
+
+### 2.5 解码阶梯：轴必须交叉，且先算预算
+
+```
+明文候选 = OP(字段₁..字段₃) × 顺序(下标/seq/TS/外部置换表) × 打包(半字节 hi|lo, 位序) × 后变换
+- OP 至少覆盖 1~3 元 XOR / ADD / SUB → scripts/decode_engine.py 强制全交叉
+- 顺序源包含"附件二进制里零引用的置换表"（ghidra-core scripts/unreferenced_data.py）
+- 硬门 1（预算）：先算候选总数；算得出却仍剪轴 ⇒ 必须写明理由（铁律 13）
+- 硬门 2（覆盖）：任一轴恒为 identity/常量 ⇒ 记为未覆盖，禁止计入"试过"
+- 硬门 3（oracle）：无校验手段（hash 常量/重复项一致性/格式校验位）不许全交叉开跑
+- 尺寸对齐：载体位数与目标长度严丝合缝 = 信道判对的强证据（非禁令——尺寸巧合可作诱饵）
+```
+
+**异常即约束**：
+
+```
+同一逻辑键（同 seq / 同下标 / 重传）上字段取值冲突
+  ⇒ 该字段大概率不是明文；明文可能是 ≥2 字段的复合函数（xor/add/sub）
+  ⇒ 正确函数必须让重复项一致 → 免费过滤器：scripts/conflict_oracle.py
+  ⇒ 注意真实抓包重传载荷可合法不同——冲突是假设生成器，不是排除器
+  ⇒ 未解决前用 ghidra-core ledger.py anomaly --consequence 落账，禁止当噪声枚举
+```
+
+**表先看跨度**：附件有二进制时，32 字节零引用表 → 先查 +0x40/+0x80 是否构成 64/128 项置换，相邻表可能是同一置换的两半或倒序（ghidra-core unreferenced_data.py）。
 
 ### 3. 路由表（按分诊发现选路）
 
@@ -55,6 +79,8 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 | HTTP/SMB/FTP 明文传文件 | `references/pcap-triage.md` §文件提取 |
 | FTP/Telnet/HTTP Basic/NTLM 认证流量 | `references/pcap-triage.md` §凭据 |
 | 协议分布全正常、内容全噪声 | 元数据直方图：`timing_decode.py --mode len` / `--mode byte --offset N`（TTL=IP+8，TOS=IP+1；**IPID 是 16 位大端，`--offset` 只读 1 字节 → 高字节 IP+4 恒为 0、低字节 IP+5**），方法论 `references/tunnels.md` §通用检测 |
+| 附件 = pcap + 二进制 | 先用 ghidra-core `unreferenced_data.py` 提取零引用材料清单（置换/替换/密钥表），再解 pcap |
+| 字段取值在重传/重复键上冲突 | 复合算子分支：`conflict_oracle.py`（不是噪声分支）→ 命中组合交 `decode_engine.py` + oracle 验证 |
 
 ### 4. 证据落账（强制）
 
@@ -68,7 +94,9 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 
 | 脚本 | 一句话 |
 |---|---|
-| `scripts/pcap_triage.py` | 开局分诊（零依赖）；某协议占比 >60% exit 2 并给路由 hint |
+| `scripts/pcap_triage.py` | 开局分诊（零依赖）；某协议占比 >60% exit 2 并给路由 hint；报告末尾附 top TCP 流字段一致性矩阵，重复键冲突打 ⚠ |
+| `scripts/conflict_oracle.py` | 重复逻辑键上字段冲突报告 + 消除冲突的 1~3 元 xor/add/sub 组合排名（假设生成器，非排除器） |
+| `scripts/decode_engine.py` | 字段×算子×顺序×打包多轴全交叉解码；无 --oracle（sha256/前缀/可打印）exit 2 拒绝开跑，超 --max-candidates 同样 exit 2 |
 | `scripts/hid_keyboard.py` | usbhid.data hex 行 → 还原文本（内置完整 HID 键码表+Shift 映射，--lines 跟踪方向键分行） |
 | `scripts/mouse_render.py` | HID 鼠标/数位板位移 → 累加轨迹 → PGM 图（纯 stdlib；输出是 `<out>_mode<N>.pgm` 不是 `<out>.pgm`；`--png` 需 PIL——**venv 里没有 PIL、PATH 上的 python 3.10 才有**，缺了自动降级只出 PGM） |
 | `scripts/dnscat2_reassemble.py` | DNS 查询名列表 → 去 9 字节头/去重传 → 重组 payload（缺省只自动猜 **2 级**隧道域名；3 级以上必须显式 `--domain`，否则静默猜错成 `example.com`） |
@@ -79,6 +107,6 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 | 文件 | 何时读 |
 |---|---|
 | `references/pcap-triage.md` | pcap 修头/pcapfix、`--export-objects` 文件提取、流重组、明文凭据与 NTLMv2、strings 碰运气 |
-| `references/tunnels.md` | DNS（dnscat2/尾部字节/TXT/oracle）、ICMP、TCP flags、时序隐信道配方 + 通用元数据直方图方法论 |
+| `references/tunnels.md` | DNS（dnscat2/尾部字节/TXT/oracle）、ICMP、TCP flags、时序隐信道配方 + 通用元数据直方图方法论 + pcap+二进制复合题载体判定 tells |
 | `references/usb-hid.md` | USB 键盘 8 字节报告、鼠标/数位板画图还原、LED Morse、蓝牙 RFCOMM 重组 |
 | `references/wifi-tls.md` | WPA eapol 破解+airdecap 二次分析、TLS 解密三途径、SMB3.1.1 会话密钥推导 |
