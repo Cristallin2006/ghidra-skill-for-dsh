@@ -52,6 +52,14 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 - 导出 patched 二进制：`export-binary`（Original File 格式，返回 md5 与原文件对比）
 - 二进制比对：`version-track`（找变化函数）→ `function-diff`（看具体差异）→ `match-function`（找对应函数）
 - **交付纪律**：报告含 范围 / 证据（地址+复现命令）/ 结论 / 产物路径+SHA256。未经证据支撑的否定结论（"无网络能力"）禁止出现。
+- **flag 类交付清单（CTF 题按此模板逐项打勾，缺项不许交付）**：
+  1. flag 本体 + **验证方式声明**（runtime-oracle / 往返复算 / 仅静态推断——最后一档标 ⚠UNVERIFIED）
+  2. **正例**：正确输入被接受（命令+输出）
+  3. **负例 ≥1**：近似错值被拒绝（排除"凡输入皆通过"，铁律 11 oracle 成对）
+  4. **唯一性**：解空间可枚举时给穷举结论或剩余歧义清单
+  5. **产物**：脚本路径 + 中间产物（按 `<sample>.stageN.*` 命名）+ SHA256
+  6. **验证引擎声明**：用了几个独立引擎？只有一个 Unicorn 系（含 Qiling）⇒ 独立性不成立（re-dynamic §4⑤）
+- **交付前硬门（判真/假 check、"诱饵"判定后必过）**：任何"该分支是假/诱饵/作者逻辑坏了"的结论，交付前必须能指向一次判定性实验（钉值/读状态量/拟合表达式）的记录（ledger anomaly 或 observe），否则按铁律 10④ 不许交付
 
 ## 时间盒与退路
 
@@ -68,4 +76,5 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 | `references/rust-binary.md` | triage 报 `lang_hints.rust=true` 或发现 Rust 特征串时 |
 | `references/cpp-binary.md` | C++ 样本：vtable/RTTI 恢复、this 指针类型化、STL 噪声过滤、MFC 消息映射 |
 | `references/classic-crypto.md` | 认出算法后的求逆执行：换表 base64/RC4/TEA 手撕、流水线求逆纪律（识别归 ghidra-core crypto-ident.md） |
+| `references/decompiler-pitfalls.md` | 要引用伪码下结论前：L0-L3 信任模型、反编译器失败模式表、五阶段流水线、质量门 6 条（decomp_lint.py 体检先行） |
 | `references/pwn-essentials.md` | 漏洞定位完成、要写 exp 时：checksec 打法树/ROP/libc 泄露/pwntools 骨架（WSL 工具链） |

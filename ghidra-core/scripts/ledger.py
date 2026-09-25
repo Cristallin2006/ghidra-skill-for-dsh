@@ -553,6 +553,58 @@ def cmd_render(args) -> int:
     return 0
 
 
+_SCHEMA = {
+    "observe": ({"type", "ts", "sha16", "region", "tool", "note", "visit"}, {}),
+    "conclude": ({"type", "ts", "sha16", "id", "conclusion", "address",
+                  "evidence", "source", "independent"},
+                 {"source": {"read_views", "self-script", "decompiler-render",
+                             "runtime-gdb", "runtime-oracle", "manual"},
+                  "independent": {"yes", "no"}}),
+    "anomaly": ({"type", "id", "status", "ts", "sha16", "region", "note",
+                 "consequence"}, {"status": {"open"}}),
+    "anomaly-resolve": ({"type", "anomaly_id", "status", "note", "ts"},
+                        {"status": {"resolved", "waived"}}),
+    "stuck": ({"type", "ts", "sha16", "at", "tried", "escalate"}, {}),
+}
+
+
+def cmd_validate(args) -> int:
+    """机器校验台账条目的最小 schema（CI 回归/判据自动化的前提）。"""
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    violations = []
+    total = 0
+    if jsonl.exists():
+        for lineno, line in enumerate(jsonl.read_text(
+                encoding="utf-8", errors="replace").splitlines(), 1):
+            if not line.strip():
+                continue
+            total += 1
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError as ex:
+                violations.append(f"line {lineno}: JSON 解析失败 {ex}")
+                continue
+            t = e.get("type")
+            if t not in _SCHEMA:
+                violations.append(f"line {lineno}: 未知 type {t!r}")
+                continue
+            required, enums = _SCHEMA[t]
+            missing = required - set(e)
+            if missing:
+                violations.append(
+                    f"line {lineno}: type={t} 缺字段 {sorted(missing)}")
+            for field, allowed in enums.items():
+                if field in e and e[field] not in allowed:
+                    violations.append(
+                        f"line {lineno}: type={t} {field}={e[field]!r} "
+                        f"不在取值域 {sorted(allowed)}")
+    out = {"ok": not violations, "ledger": str(jsonl), "entries": total,
+           "violations": violations}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0 if not violations else 2
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Iron Rule 7 mechanical circuit breaker")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -621,6 +673,10 @@ def main() -> int:
     p = sub.add_parser("render", help="重建 .ledger.md 人读视图")
     p.add_argument("binary")
     p.set_defaults(fn=cmd_render)
+
+    p = sub.add_parser("validate", help="机器校验台账条目最小 schema（CI 判据用）")
+    p.add_argument("binary")
+    p.set_defaults(fn=cmd_validate)
 
     args = ap.parse_args()
     return args.fn(args)

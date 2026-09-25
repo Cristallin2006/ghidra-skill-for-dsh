@@ -102,6 +102,8 @@ NUL 在 +10。自检失败或同输入多次运行结果不同 → **该 harness
 **④ 矛盾读数的第一动作**：`strlen` 忽大忽小、同一缓冲两次读出不同值 → 先交叉验证工具
 （独立 harness / strace / oracle.py --dump），禁止为矛盾编造机制（「IFUNC 怪癖」之类）。
 
+**⑤ 独立 oracle 引擎排序（挑"独立引擎"时先看这条）**：验证用的第二引擎必须与主分析脚手架**零共享**才算独立。PE 样本的独立性排序：**Wine（真实 x86 执行 + 独立 Win32 实现）> 真机运行 > 第二套自写实现（纯 Python 按反汇编重写模型）≫ 另一个 Unicorn harness**。**Qiling 不是独立引擎——它底层就是 Unicorn**，你的自写 Unicorn harness 的 ABI 理解错了，Qiling 会跟着错（happyVm 复盘：`IO_STATUS_BLOCK` 布局、`HeapReAlloc` 参数序写错时所有"证据"会一起错）。自建 harness 必须当被测对象对待：正负对照 + 已知答案自检 + 独立引擎复验，一个都不省；验证与求解并行（答案出来之前就把 Wine/真机准备好）。ELF 样本同理：WSL 原生运行 > 第二实现 ≫ 另一个 Unicorn。
+
 ## 防死循环
 
 oracle 搭不起来（缺 stub/反仿真/地址算不对）→ 按阶梯升，**每级 ≤15 分钟**；禁止反复重试同一层（铁律 6/7，全文见 ghidra-core §1；卡点写台账）。

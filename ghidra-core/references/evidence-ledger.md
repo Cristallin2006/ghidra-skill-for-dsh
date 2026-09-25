@@ -12,6 +12,21 @@
 
 ## 命令
 
+**必填项速查**（参数错误是最高频往返，先扫这张表再敲命令）：
+
+| 子命令 | 必填 | 可选 |
+|---|---|---|
+| `query` | `<binary>` | `--region/--id/--text` |
+| `observe` | `<binary> --region --tool --note` | 同区回访时 `--delta` 必填 |
+| `conclude` | `<binary> --address --conclusion --evidence --source --independent` | `--harness`（self-script 时必填）`--quote --id --overturn` |
+| `anomaly` | `<binary> --region --note --consequence` | — |
+| `resolve` | `<binary> --anomaly <id>` + `--note`/`--waive` 二选一 | — |
+| `stuck` | `<binary> --at --tried --escalate` | 有 open anomaly 时 `--ack "A1,A3"` 必填 |
+| `status` / `render` | `<binary>` | — |
+
+`--source` 枚举：`read_views / runtime-oracle / runtime-gdb / decompiler-render / self-script / manual`；
+`--independent` 枚举：`yes / no`（详见下文「结论来源标注」）。
+
 ```bash
 LEDGER="$HOME/.dsh/skills/ghidra-core/scripts/ledger.py"
 
@@ -96,6 +111,13 @@ exit 2 不是错误，是门。**正确处理是回答强制问题或升级，�
 | 重复键冲突（同一键两个取值） | `--note "seq=0x10 的包 payload 两次不同" --consequence "若 payload 是明文，则同键取值必须一致"` |
 | 伪码声明长度 vs 实测处理长度不符 | `--note "伪码读 32 字节，实测处理 64" --consequence "若长度域是明文，则处理长度不能超过它"` |
 | 同一事实两次读数不同 | `--note "0x140003010 两次 read 值不同" --consequence "若该区域是 rodata，则两次读数必须一致"` |
+| 工具 verdict 与结构证据冲突（如 triage 报 packed 但节布局正常） | `--note "triage=packed-unknown 但存在 .CRT/.tls 节" --consequence "若样本真有壳，则不应出现 MinGW 标准布局"` |
+| **自己 harness 的异常**（假分配/越界/调用"成功"但零效果） | `--note "HeapReAlloc 桩一次分配跳 0x30000000" --consequence "若桩实现正确，则堆顶不应跳跃式增长"` |
+
+**「我心里已经解释清楚了」不是免落账的理由**——happyVm 复盘：6 次不一致（triage 误报、
+harness bug、"多解"假象）全部心里解释掉、0 次落账，正是铁律 12 要拦的行为。解释清楚也要落账，
+落账成本一行命令，不落账的代价是断路器与复盘双双失效。`status` 在 ≥5 次观察且 0 条 anomaly
+时会打印提示——看到它就回查一遍"这期间有没有被我消化掉的不一致"。
 
 consequence 的写法要点：指向一个**可检验的外部事实**，形如
 "若该字段是明文，则重复包取值必须一致"——之后任何一次观测都能拿来证伪它。

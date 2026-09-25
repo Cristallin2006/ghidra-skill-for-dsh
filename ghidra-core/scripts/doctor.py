@@ -20,6 +20,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import driver  # noqa: E402 - reuse the skill's environment resolution
 
+for _stream in (sys.stdout, sys.stderr):
+    if _stream.encoding and _stream.encoding.lower() not in ("utf-8", "utf8"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def check(label, ok, detail=""):
     return {"check": label, "ok": bool(ok), "detail": detail}
@@ -604,7 +608,32 @@ def main() -> int:
           file=sys.stderr)
     if out_path:
         Path(out_path).write_text(text, encoding="utf-8")
+    _print_cheatsheet()
     return 0 if all_ok else 1
+
+
+def _print_cheatsheet() -> None:
+    """本机化命令速查（stderr）：SKILL.md 的路径约定是通式，这里给出本机
+    实际展开值——agent 应照抄这里的拼写，不要从通式手工换算。"""
+    import shutil
+    py = "python3" if (not _IS_NT and shutil.which("python3")) else "python"
+    sk = Path(__file__).resolve().parent
+    try:
+        ws = driver.workspace()
+    except Exception:
+        ws = Path.home() / ".dsh" / "ghidra-workspace"
+    venv_py = _RE_TOOLS / _VENV_PY
+    lines = [
+        "",
+        "──── 本机命令速查（可粘贴，值为本机实测展开）────",
+        f"PY={py}   SK={sk}   WS={ws}",
+        f"VENV_PY={venv_py}" + ("" if venv_py.is_file() else "  (不存在，先建 venv)"),
+        f"  分诊:   {py} \"{sk / 'rpc_driver.py'}\" ensure <sample> && "
+        f"{py} \"{sk / 'rpc_driver.py'}\" \"@{ws / 'out' / 'triage.json'}\" triage <sample>",
+        f"  台账:   {py} \"{sk / 'ledger.py'}\" status <sample>",
+        f"  体检:   {py} \"{sk / 'doctor.py'}\" --quick",
+    ]
+    print("\n".join(lines), file=sys.stderr)
 
 
 def os_environ_java():
