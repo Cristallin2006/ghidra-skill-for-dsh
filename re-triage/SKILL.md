@@ -33,7 +33,7 @@ python "$SK/rpc_driver.py" ensure /path/to/sample
 python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json" triage /path/to/sample
 ```
 
-产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python）与 **`packer` 壳判定块**（节名 / 文件内 `UPX!` magic / 结构特征三信号交叉，verdict ∈ upx / packed-unknown / none）。`lang_hints.upx` 只是兼容字段——判壳以 `packer` 块为准，且 **verdict=none 不排除壳**（节名可改、magic 可抹）；有疑点按 advice 人工复核。参数细节见 ghidra-core §5 能力清单。
+产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python）与 **`packer` 壳判定块**（节名 / 文件内 `UPX!` magic / 结构特征三信号交叉，verdict ∈ upx / packed-unknown / none）。`lang_hints.upx` 只是兼容字段——判壳以 `packer` 块为准，且 **verdict=none 不排除壳**（节名可改、magic 可抹）；反过来 **verdict=packed-unknown 也不等于有壳**——出现 `.CRT`/`.tls` 节（MinGW-w64 标准布局）时结构信号会被降级到 `false_positive_hints`，见到该字段先怀疑误报，不要直接去脱壳。有疑点按 advice 人工复核。参数细节见 ghidra-core §5 能力清单。
 
 2. **手工补充**（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
 3. **下判据 → 选路线**（见下「语言/平台路由」与「路线决策」）。

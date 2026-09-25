@@ -452,25 +452,33 @@ def cmd_status(args) -> int:
     jsonl, md = ledger_paths(binary)
     entries = load_entries(jsonl)
     obs = [e for e in entries if e.get("type") == "observe"]
+    anoms = [e for e in entries if e.get("type") == "anomaly"]
     hot = {}
     for e in obs:
         hot[e["region"]] = hot.get(e["region"], 0) + 1
-    print(json.dumps({
+    out = {
         "ok": True, "ledger": str(jsonl), "md": str(md),
         "observations": len(obs),
         "conclusions": len([e for e in entries if e.get("type") == "conclude"]),
+        "anomalies": len(anoms),
         "stucks": [e for e in entries if e.get("type") == "stuck"],
         "open_anomalies": open_anomalies(entries),
         "revisit_hotspots": {r: n for r, n in sorted(hot.items(),
                              key=lambda kv: -kv[1]) if n >= 2},
-    }, ensure_ascii=False, indent=2))
+    }
+    if len(obs) >= 5 and not anoms:
+        out["hint"] = (f"已入账 {len(obs)} 次观察但 0 条 anomaly。若期间遇到过任何不一致"
+                       "（工具误报/读数异常/假设冲突/harness 异常），按铁律 12 用 "
+                       "ledger.py anomaly --consequence 落账，禁止降级为噪声")
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 
 
 def render(binary: Path) -> Path:
     jsonl, md = ledger_paths(binary)
     entries = load_entries(jsonl)
-    sha = entries[-1]["sha16"] if entries else sha16(binary)
+    sha = next((e["sha16"] for e in reversed(entries) if "sha16" in e),
+               sha16(binary))
 
     latest: dict[int, dict] = {}
     for e in entries:

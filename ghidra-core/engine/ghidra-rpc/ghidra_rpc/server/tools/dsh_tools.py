@@ -370,6 +370,24 @@ def _handle_triage(ctx, args: dict) -> dict:
         if hollow:
             structural.append("uninitialized-writable-block")
 
+        # MinGW-w64 (gcc) normally ships .CRT/.tls sections whose standard
+        # layout trips both structural signals on fully unpacked binaries.
+        # Demote those two signals to hints so they cannot reach the
+        # packed-unknown threshold on their own.
+        fp_hints = []
+        mingw_layout = any(n.lower().startswith((".crt", ".tls"))
+                           for n in block_names)
+        if mingw_layout:
+            kept = []
+            for sig in structural:
+                if sig in ("entry-in-last-exec-block",
+                           "uninitialized-writable-block"):
+                    fp_hints.append(
+                        f"{sig} 命中，但存在 .CRT/.tls 节——MinGW-w64 标准布局，疑似误报")
+                else:
+                    kept.append(sig)
+            structural = kept
+
         if upx_signals:
             packer_verdict = "upx"
         elif len(structural) >= 2:
@@ -380,6 +398,7 @@ def _handle_triage(ctx, args: dict) -> dict:
             "verdict": packer_verdict,
             "upx_signals": upx_signals,
             "structural_signals": structural,
+            "false_positive_hints": fp_hints,
             "advice": (
                 "UPX 指纹命中；upx -d 失败（头被篡改）时先跑 re-unpack 的 upx_repair.py"
                 if packer_verdict == "upx" else

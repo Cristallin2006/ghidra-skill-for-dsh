@@ -144,6 +144,13 @@ def _handle_disassemble(ctx, args: dict) -> dict:
             f"No instruction at {address_str}; disassembly started from the "
             f"next available instruction at {actual_start}."
         )
+        # Inline the warning into the listing itself — consumers that only
+        # read the listing text must not mistake this for a listing that
+        # starts at the requested address.
+        result["listing"] = (
+            f"; WARNING: requested {address_str} has no instruction; "
+            f"listing starts at {actual_start}\n"
+        ) + result["listing"]
     return result
 
 
