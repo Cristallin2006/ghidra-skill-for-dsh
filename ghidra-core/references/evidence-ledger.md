@@ -20,7 +20,7 @@
 | `observe` | `<binary> --region --tool --note` | 同区回访时 `--delta` 必填 |
 | `conclude` | `<binary> --address --conclusion --evidence --source --independent` | `--harness`（self-script 时必填）`--quote --id --overturn` |
 | `anomaly` | `<binary> --region --note --consequence` | — |
-| `resolve` | `<binary> --anomaly <id>` + `--note`/`--waive` 二选一 | — |
+| `resolve` | `<binary> --anomaly <id>` + `--note`/`--waive` 二选一；`--note` 关闭时 `--evidence` **必填**（反向门，缺证据 exit 2） | `--evidence-file` |
 | `stuck` | `<binary> --at --tried --escalate` | 有 open anomaly 时 `--ack "A1,A3"` 必填 |
 | `status` / `render` | `<binary>` | — |
 
@@ -64,7 +64,10 @@ python "$LEDGER" anomaly <binary> --region 0x140003000-0x140003040 \
   --consequence "若该字段是明文，则重复包取值必须一致"
 
 # 关闭异常：append-only，不改旧行；--note（如何解决）与 --waive（为何豁免）二选一
-python "$LEDGER" resolve <binary> --anomaly A1 --note "read_views 重读，第一次是渲染错位"
+# 反向门（机械门）：--note 关闭必须同时给 --evidence（命令/地址/读数），否则 exit 2——
+# 叙述性机制解释不是证据，不许用它解除约束
+python "$LEDGER" resolve <binary> --anomaly A1 --note "read_views 重读，第一次是渲染错位" \
+  --evidence "read-bytes 0x140003010 16 -> 89 50 46，与反汇编一致"
 python "$LEDGER" resolve <binary> --anomaly A2 --waive "需要 trace 工具，本机未装"
 
 # 总览（新会话接手旧样本的第一件事）/ 手动重建 md
@@ -129,6 +132,14 @@ exit 2 并打印全部 open 清单。两条出路：
    正常入账。ack 不全（漏 id、错 id）同样 exit 2。
 2. **工具缺失等客观不可查** → `resolve --waive "为何豁免"` 先豁免，不许硬卡。
    waive 不是放弃：豁免理由落账，后来工具到位可随时再 anomaly 一次重新追。
+
+**关闭异常的机械门（反向门，比正向门更重要）**：`resolve --note` 必须同时给
+`--evidence`（复核命令/地址/读数），否则 **exit 2**——叙述性机制解释不是证据，
+不许用它解除约束；没有反向门，"我大概搞清楚了"就能无条件关闭任何 anomaly。
+waive 通道豁免 `--evidence`（豁免理由即 `--waive` 文本本身，已强制入账），
+但 `waived` 在 `status`/render 里与 `resolved` 单独区分、全程可见。
+证据写入 `anomaly-resolve` 条目的 `evidence` 字段并在 render 异常表「解决/豁免」列
+带出；`validate` 只约束新条目（历史无 evidence 字段的 resolve 不判违规）。
 
 append-only 原则不变：`resolve` 不改 anomaly 旧行，只追加 `anomaly-resolve` 记录；
 open 状态由回放计算（有 anomaly 且无对应 resolve = open），`status`/`query` 输出

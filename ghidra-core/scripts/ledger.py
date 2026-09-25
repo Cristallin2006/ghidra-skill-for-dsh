@@ -19,7 +19,7 @@ Commands:
   conclude <binary> --conclusion C --address A --evidence E \
            --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn]
   anomaly  <binary> --region R --note N --consequence C
-  resolve  <binary> --anomaly ID (--note N | --waive W)
+  resolve  <binary> --anomaly ID (--note N --evidence E | --waive W)
   stuck    <binary> --at R --tried "A,B" --escalate TARGET [--ack "A1,A3"]
   status   <binary>
   render   <binary>
@@ -28,11 +28,15 @@ Anomaly discipline (Iron Rule 12): an observed inconsistency MUST be booked
 as a testable hypothesis via `anomaly` (--consequence answers "if this holds,
 what else must be false"), never downgraded to "noise / ambiguity to be
 enumerated later". Anomalies stay `open` until a matching `resolve` entry
-(--note how it was resolved, or --waive why it is objectively unverifiable,
-e.g. missing tooling) is appended; old lines are never rewritten. While any
-anomaly is open, `stuck` is REFUSED (exit 2) unless --ack lists every open
-anomaly id ("I know these are unchecked") — ack or waive unblocks stuck, so
-missing tooling can never deadlock the loop.
+is appended; old lines are never rewritten. Reverse gate (mechanical):
+`resolve --note` MUST also give `--evidence` (command/address/reading) —
+a narrative explanation is not evidence and cannot close a constraint;
+missing evidence = exit 2. Only objectively unverifiable anomalies (missing
+tooling etc.) may take the `--waive` channel instead; the waive reason is
+booked and `waived` renders separately from `resolved` in status/render.
+While any anomaly is open, `stuck` is REFUSED (exit 2) unless --ack lists
+every open anomaly id ("I know these are unchecked") — ack or waive
+unblocks stuck, so missing tooling can never deadlock the loop.
 
 Long-text args (--conclusion/--evidence/--quote) accept a file instead:
 --conclusion-file F etc. (UTF-8). Use files from PowerShell 5.1 — embedded
@@ -389,6 +393,25 @@ def cmd_resolve(args) -> int:
                           "error": "--note 与 --waive 二选一，必须且只能给一个"},
                          ensure_ascii=False))
         return 1
+    evidence = (args.evidence or "").strip()
+    if args.evidence_file:
+        p = Path(args.evidence_file)
+        if not p.is_file():
+            print(json.dumps({"ok": False,
+                              "error": f"--evidence-file not found: {p}"},
+                             ensure_ascii=False))
+            return 1
+        evidence = p.read_text(encoding="utf-8").strip()
+    # 反向门（铁律 12）：resolve 关闭异常必须给可检验证据；叙述性解释不算。
+    # waive 通道豁免（豁免理由即 --waive 文本本身，已强制入账），
+    # 但 status=waived 在 status/render 里单独可见，与 resolved 区分。
+    if note and not evidence:
+        print("[反向门 · 铁律12] resolve 关闭异常必须给可检验证据"
+              "（命令/地址/读数），叙述性解释不算——")
+        print("  重新执行并加: --evidence \"复核命令 + 关键读数\""
+              "（长文本走 --evidence-file）")
+        print("  客观不可查（工具缺失等）才走: --waive \"为何豁免\"")
+        return 2
     jsonl, _ = ledger_paths(binary)
     entries = load_entries(jsonl)
     aid = str(args.anomaly).strip()
@@ -405,6 +428,8 @@ def cmd_resolve(args) -> int:
     entry = {"type": "anomaly-resolve", "anomaly_id": aid,
              "status": "waived" if waive else "resolved",
              "note": waive or note, "ts": now()}
+    if evidence:
+        entry["evidence"] = evidence
     append_entry(jsonl, entry)
     auto_render(binary)
     print(json.dumps({"ok": True, "anomaly": aid, "status": entry["status"]},
@@ -537,6 +562,8 @@ def render(binary: Path) -> Path:
         r = resolves.get(str(e.get("id")))
         status = r["status"] if r else "open"
         how = r["note"].replace("\n", " ⏎ ") if r else "—"
+        if r and r.get("evidence"):
+            how += f"｜证据: {r['evidence'].replace(chr(10), ' ⏎ ')}"
         lines.append(f"| {e['id']} | {status} | {e['region']} "
                      f"| {e['note'].replace(chr(10), ' ⏎ ')} "
                      f"| {e['consequence'].replace(chr(10), ' ⏎ ')} "
@@ -599,6 +626,12 @@ def cmd_validate(args) -> int:
                     violations.append(
                         f"line {lineno}: type={t} {field}={e[field]!r} "
                         f"不在取值域 {sorted(allowed)}")
+            # 反向门只约束新条目：旧 resolve 无 evidence 字段不判违规；
+            # 但新条目一旦写了 evidence 就必须非空（机械门在 resolve 写入侧）
+            if t == "anomaly-resolve" and "evidence" in e \
+                    and not str(e["evidence"]).strip():
+                violations.append(
+                    f"line {lineno}: type=anomaly-resolve evidence 为空字符串")
     out = {"ok": not violations, "ledger": str(jsonl), "entries": total,
            "violations": violations}
     print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -650,10 +683,12 @@ def main() -> int:
                    help="若该不一致成立，什么必须为假（可检验的推论）")
     p.set_defaults(fn=cmd_anomaly)
 
-    p = sub.add_parser("resolve", help="关闭异常：--note 如何解决 / --waive 为何豁免（二选一）")
+    p = sub.add_parser("resolve", help="关闭异常：--note 如何解决 + --evidence 可检验证据（机械门，缺证据 exit 2）/ --waive 为何豁免（二选一）")
     p.add_argument("binary")
     p.add_argument("--anomaly", required=True, help="anomaly id（A1、A2…）")
     p.add_argument("--note", help="如何解决的")
+    p.add_argument("--evidence", help="可检验证据（命令/地址/读数）；--note 关闭时必填（反向门）")
+    p.add_argument("--evidence-file", help="evidence 长文本走文件（UTF-8）")
     p.add_argument("--waive", help="为何豁免（工具缺失等客观不可查）")
     p.set_defaults(fn=cmd_resolve)
 

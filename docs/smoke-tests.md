@@ -8,7 +8,7 @@
 |---|---|---|---|
 | re-triage | 任意新样本到手 | `ensure` + `triage`，先记录 imports + 语言/壳判定再深挖（铁律 4） | triage JSON 含 `packer` 块与 `lang_hints` |
 | ghidra-core | 任何区域级分析 | `ledger.py observe` 落账；同区第二次 observe 被断路器拦（exit 2） | `ledger.py validate <bin>` exit 0 |
-| ghidra-static | 判型为普通 native、要读懂逻辑 | Recon→Analysis 流程；引用伪码结论前先 `decomp_lint.py` 体检 | fatal 函数清单非空时禁止读这些函数的伪码 |
+| ghidra-static | 判型为普通 native、要读懂逻辑 | Recon→Analysis 流程；引用伪码结论前先 `decomp_lint.py --binary <bin>` 体检（尾调用甄别剔除良性误报） | fatal 函数清单非空时禁止读这些函数的伪码；尾调用类单列不算 fatal |
 | re-dynamic | 静态 15 分钟无关键路径 | 直接运行/oracle.py/Frida 入口；patch 态结论标 `--independent no` | oracle 有正例+负例成对（铁律 11） |
 | re-unpack | triage `packer.verdict=upx` 或高熵+导入异常 | `upx -d` / `upx_repair.py`；脱壳产物回 re-triage 重新分诊 | 脱壳前后 imports 对比，验证清单全过 |
 | traffic-analysis | 输入是 pcap/pcapng | 流量分诊（协议树/隧道/隐信道）；提取出的二进制回 re-triage | tshark 可用性以 doctor toolchain 节为准 |
@@ -32,6 +32,7 @@
 | `frame_map.py` | 大栈帧函数（happyVm: `0x40b2e0`） | 帧 `0xc48`；标出 `+0x80..0x90` 同槽多宽度可疑；`+0x49c` 失败计数器 |
 | `const_audit.py` | 含小整数渲染的函数（happyVm: `0x40b2e0`） | 抓到 `&DAT_00000007`（= 长度 7）类嫌疑；真实 `LEA` 立即数（如字符串中部指针）**不**报漂移 |
 | `call_histogram.py` | 反汇编 listing 文件（happyVm: main_asm.lst） | 头号命中 `0x40aba0` × 22（≥3 次高亮） |
+| `decomp_lint.py` | decompile-all @out JSON + `--binary`（happyVm: happyvm.all.c） | fatal **13/468 = 2.8%**（尾调用已剔除，单列 15 个）；有 fatal exit 2。不给 `--binary` 时旧口径 28/468（尾调用混入 fatal） |
 | `const_scan.py` | Cython/C 反编译 C 或 decompile-all @out JSON | 重建 `PyList_New/PyTuple_New` 字面量；小整数聚集告警（chal 复盘 L 表 48 项） |
 | `xor_scan.py` | 含单字节 XOR 层的 blob | Top N 命中正确密钥；`--dump` 产物可打印/magic 正确 |
 | `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；unicorn 缺失时 exit 3 且提示进 re-tools-venv |
