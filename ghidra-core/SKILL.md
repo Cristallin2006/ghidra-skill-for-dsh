@@ -91,7 +91,7 @@ python "$RD" rename-function /path/to/binary FUN_00401000 check_flag
 ```
 
 `rpc_driver.py` 做的事：项目映射（`~/dsh-ghidra-workspace/projects-rpc/dsh_<sha256前16>.gpr`，junction 路径）、binary key 自动替换（不用记 `/name-hash6` 后缀）、`--project` 注入、`@out` 落盘、环境变量自给（GHIDRA_INSTALL_DIR/JAVA_HOME/LOCALAPPDATA 重定向/USERNAME=dsh）。
-子命令：`ensure|status|stop <binary>` + 其余全部透传给 `ghidra-rpc` CLI（`decompile`/`functions`/`strings`/`disassemble`/`assemble`/`write-bytes`/`triage`/`exec-code`/`export-binary`/`emulate-function`/`version-track`…，全量见 `ghidra-rpc --help`）。
+子命令：`ensure|status|stop <binary>`（ensure 支持 `--timeout N` 秒，等待期间每 12s 向 stderr 打心跳，大二进制首载不再像死掉）+ 其余全部透传给 `ghidra-rpc` CLI（`decompile`/`functions`/`strings`/`disassemble`/`assemble`/`write-bytes`/`triage`/`exec-code`/`export-binary`/`emulate-function`/`version-track`…，全量见 `ghidra-rpc --help`）。
 二进制比对：`version-track <A> <B>` / `function-diff <A> <f1> <B> <f2>` 会自动把 B 也 load 进 A 的项目（VT 要求同项目）。
 
 ### 长任务（后台执行）
@@ -166,10 +166,10 @@ export JAVA_HOME="C:/Java"
 | `ensure` / `status` / `stop` | daemon 与二进制生命周期（ensure 幂等） |
 | `triage` ◆ | 一键分诊报告（本 skill 入口） |
 | `metadata` / `imports` / `exports` / `memory-map` / `relocations` | 程序元数据 |
-| `functions` / `decompile` / `decompile-all` / `search-decompiled` | 函数与伪码 |
+| `functions` / `decompile`（`--format text` 顶层直接给 `text` 键，失败 `error` 带原始异常原文）/ `decompile-all` / `search-decompiled` | 函数与伪码 |
 | `disassemble` / `assemble` ✎ / `basic-blocks` / `pcode` | 汇编/CFG/P-code |
 | `strings` / `symbols` / `find-bytes` | 搜索 |
-| `xrefs-to` / `xrefs-from` | 交叉引用 |
+| `xrefs-to`（`--follow-fatptr` 自动追 Rust/Go {ptr,len} 描述符第二跳，hop=2 + via=描述符地址）/ `xrefs-from` | 交叉引用 |
 | `read-bytes` / `read-pointers` / `write-bytes` ✎ | 内存读写（write-bytes 已对齐 patch_bytes 语义） |
 | `rename-function` ✎ / `rename-symbol` ✎ / `batch-rename` ✎ / `set-comment` ✎ / `batch-set-comment` ✎ / `set-signature` ✎ | 标注 |
 | `create-struct` ✎ / `create-enum` ✎ / `modify-struct` ✎ / `set-data-type` ✎ / `apply-data-type-range` ✎ / `set-equate` ✎ | 数据类型 |
@@ -202,6 +202,10 @@ export JAVA_HOME="C:/Java"
 | `emulate_blob.py` | 裸 blob Unicorn 仿真骨架：`--base/--entry/--rsp/--max-insns/--reg/--map-file/--dump-dir`，停止原因分类 + dirty 页 dump；unicorn 缺失 exit 3 提示进 re-tools-venv（多层载荷题用，ctf-patterns §10） |
 | `const_scan.py` | Cython/C 常量重建：扫反编译 C（或 decompile-all @out JSON）的 `PyList_New(n)`/`PyTuple_New(n)` + 随后常量写入，直接重建 Python 字面量；小整数聚集自动告警"疑似字节级常量表"（chal 复盘 T3：L 表 48 项实测重建） |
 | `xor_scan.py` | blob 变换搜索：单字节 XOR 全扫 + 可选滚动密钥/ADD/SUB，按可打印率+magic（MZ/ELF/PK/UPX!）+flag 正则综合评分排 Top N；`--dump <key>` 落地解密产物（fakePE 复盘缺口 4，不要再现场手写第 5 版） |
+| `emulate_program.py` | **整程序仿真**（emulate_blob 的上层）：PE 装载 + IAT 桩（88 个内建 Win32 stub，ABI 陷阱已正确实现）+ 喂 stdin + 成功/失败断点；`--trace-api` 排障、`--dump-state` 取状态。console 型校验程序专用（边界见 docstring）；happyVm 实测 0.03s 跑到 `You Get FLAG!`（unicorn-harness.md 的可执行形态） |
+| `jt_resolve.py` | 跳转表一键解析：LEA+JMP 线索 ∪ decompile 警告 ∪ 伪码残留三路并集找**所有**表基址，rel32/abs32 双模式解 target，basic-blocks CFG 交叉验证；只解一张 = 解错一半（happyVm 实测 0x442b90+0x442ba0 双表全解） |
+| `frame_map.py` | 栈帧槽位归属表：`SUB RSP` 定帧 → 扫 `[RSP+off]` 首写/宽度/读写次数；同槽多宽度标可疑（伪码 `local_XXXX` 重叠命名的真身） |
+| `const_audit.py` | 伪码常量对照审计：`&DAT_0000xxxx` 小整数嫌疑、`DAT_` 引用实际字节对照、指针化字面值漂移判定（happyVm 实测抓到 `0x442f99` 漂移案例） |
 
 ### 第 3 层：legacy（冻结备查，被 rpc 取代）
 

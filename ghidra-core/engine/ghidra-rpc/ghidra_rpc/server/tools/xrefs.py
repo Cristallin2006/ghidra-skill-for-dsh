@@ -96,6 +96,85 @@ def _program_key(ctx, pi) -> str:
     return pi.name
 
 
+def _is_data_ref_type(type_str: str) -> bool:
+    """True for DATA-family reference type strings (DATA, DATA_IND, ...)."""
+    return "DATA" in type_str.upper()
+
+
+def _read_pointer_at(pi, addr) -> int | None:
+    """Read the pointer-sized little/big-endian value stored at ``addr``.
+
+    Returns None when the address has no initialised bytes or the read fails.
+    """
+    mem = pi.program.getMemory()
+    ptr_size = pi.program.getDefaultPointerSize()
+    try:
+        if ptr_size == 8:
+            return mem.getLong(addr) & 0xFFFFFFFFFFFFFFFF
+        if ptr_size == 4:
+            return mem.getInt(addr) & 0xFFFFFFFF
+        if ptr_size == 2:
+            return mem.getShort(addr) & 0xFFFF
+    except Exception:
+        return None
+    return None
+
+
+def _looks_like_fatptr_descriptor(pi, desc_addr, target_addr) -> bool:
+    """True when ``desc_addr`` holds a pointer to (near) ``target_addr``.
+
+    Rust/Go strings are {ptr, len} fat pointers: the first word of the
+    descriptor points at the string body. Allow a ±16 byte tolerance so
+    descriptors pointing at a small header before the payload still match.
+    """
+    value = _read_pointer_at(pi, desc_addr)
+    if value is None:
+        return False
+    return abs(value - target_addr.getOffset()) <= 16
+
+
+def _follow_fatptr_second_hop(pi, addr, first_hop: list[dict], limit: int) -> list[dict]:
+    """For DATA-type first-hop xrefs that look like fat-pointer descriptors,
+    collect the second-hop references to each descriptor address.
+
+    Each returned entry carries ``hop: 2`` and ``via: <descriptor address>``.
+    Descriptors are de-duplicated; the combined result respects ``limit``
+    (first-hop entries keep priority). No third hop is ever followed.
+    """
+    second_hop: list[dict] = []
+    seen_descriptors = set()
+    remaining = limit - len(first_hop)
+    if remaining <= 0:
+        return second_hop
+
+    for xref in first_hop:
+        if remaining <= 0:
+            break
+        if not _is_data_ref_type(xref.get("type", "")):
+            continue
+        desc_str = xref["from_address"]
+        if desc_str in seen_descriptors:
+            continue
+        try:
+            desc_addr = pi.program.getAddressFactory().getAddress(desc_str)
+        except Exception:
+            continue
+        if desc_addr is None:
+            continue
+        if not _looks_like_fatptr_descriptor(pi, desc_addr, addr):
+            continue
+        seen_descriptors.add(desc_str)
+        for x in _collect_xrefs_at(pi, desc_addr, remaining):
+            x["via"] = desc_str
+            x["hop"] = 2
+            second_hop.append(x)
+            remaining -= 1
+            if remaining <= 0:
+                break
+
+    return second_hop
+
+
 def _handle_xrefs_to(ctx, args: dict) -> dict:
     """Find cross-references TO a target (who calls/references this?).
 
@@ -108,11 +187,20 @@ def _handle_xrefs_to(ctx, args: dict) -> dict:
     Android projects (a method called from a different classesN.dex than the
     one that defines it), but the limitation isn't DEX-specific — it applies
     to any project with more than one binary loaded in the daemon.
+
+    With ``follow_fatptr``, DATA-type first-hop references whose from-address
+    holds a pointer back to (within ±16 bytes of) the target are treated as
+    Rust/Go {ptr, len} fat-pointer descriptors: references TO the descriptor
+    are collected as a second hop and merged in, each tagged with
+    ``via: <descriptor address>`` and ``hop: 2``. First-hop entries are
+    tagged ``hop: 1``. The combined result respects ``limit`` (first hop
+    has priority); no third hop is followed.
     """
     binary = args.get("binary", "")
     target = args.get("target", "")
     limit = args.get("limit", 50)
     all_binaries = bool(args.get("all_binaries", False))
+    follow_fatptr = bool(args.get("follow_fatptr", False))
 
     if not target:
         raise ValueError("Missing required argument: target")
@@ -120,6 +208,11 @@ def _handle_xrefs_to(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
     addr = _resolve_address(pi, target)
     xrefs = _collect_xrefs_at(pi, addr, limit)
+
+    if follow_fatptr:
+        for x in xrefs:
+            x["hop"] = 1
+        xrefs.extend(_follow_fatptr_second_hop(pi, addr, xrefs, limit))
 
     if not all_binaries:
         return {"xrefs": xrefs, "count": len(xrefs)}

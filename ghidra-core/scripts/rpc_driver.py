@@ -9,7 +9,10 @@ Maps a binary path to its rpc project:
 The binary key inside the project is whatever the daemon returns from `load`.
 
 Subcommands:
-  ensure <binary>     start daemon if down, load binary if absent (idempotent)
+  ensure <binary> [--timeout N]
+                      start daemon if down, load binary if absent (idempotent);
+                      prints a heartbeat to stderr while waiting on long
+                      start/load steps; --timeout caps each wait step
   status [binary]
   stop   [binary]
   <anything else>     passed through to `ghidra-rpc`, with --project injected;
@@ -30,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # dsh/Git Bash capture decodes stdout as UTF-8; daemon JSON may carry
@@ -81,24 +85,82 @@ def rpc_exe() -> str:
     return str(exe) if exe.is_file() else str(RPC_VENV_PYTHON.parent / "ghidra-rpc")
 
 
+def _parse_rpc_output(stdout: str, stderr: str, returncode: int,
+                      cmd: list[str]) -> dict:
+    text = (stdout or "").strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = {"ok": False, "error": "cli",
+                "message": text or (stderr or "").strip(),
+                "exit_code": returncode}
+    if not data.get("ok"):
+        # Always expose the exact CLI line that failed — a bare click
+        # "Missing argument" is meaningless without it.
+        data.setdefault("cmd", cmd)
+        # Keep the CLI's stderr alongside the server's error text so the
+        # original message is never swallowed by the JSON envelope.
+        stderr_text = (stderr or "").strip()
+        if stderr_text and stderr_text not in str(data.get("message", "")):
+            data.setdefault("stderr", stderr_text)
+    return data
+
+
 def run_rpc(env, gpr: Path, argv: list[str], timeout: int | None = None) -> dict:
     # ghidra-rpc's --project is a per-command option: it goes AFTER the
     # subcommand, not before it.
     cmd = [rpc_exe()] + argv + ["--project", str(gpr)]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
                           timeout=timeout)
-    text = (proc.stdout or "").strip()
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = {"ok": False, "error": "cli",
-                "message": text or (proc.stderr or "").strip(),
-                "exit_code": proc.returncode}
-    if not data.get("ok"):
-        # Always expose the exact CLI line that failed — a bare click
-        # "Missing argument" is meaningless without it.
-        data.setdefault("cmd", cmd)
-    return data
+    return _parse_rpc_output(proc.stdout, proc.stderr, proc.returncode, cmd)
+
+
+def run_rpc_progress(env, gpr: Path, argv: list[str], timeout: float | None,
+                     heartbeat: float = 12.0, label: str = "") -> dict:
+    """Like run_rpc, but for long waits (daemon start / binary load+analyze).
+
+    Prints a heartbeat line to stderr every ``heartbeat`` seconds so a big
+    binary's first ensure doesn't look dead, and kills the CLI if ``timeout``
+    seconds elapse, returning an error with recovery advice. Standard output
+    (the JSON result) is unaffected — heartbeats go to stderr only.
+    """
+    cmd = [rpc_exe()] + argv + ["--project", str(gpr)]
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    step = label or (argv[0] if argv else "rpc")
+    started = time.monotonic()
+    next_beat = started + heartbeat
+    timed_out = False
+    while True:
+        ret = proc.poll()
+        if ret is not None:
+            break
+        now = time.monotonic()
+        if timeout is not None and now - started >= timeout:
+            timed_out = True
+            proc.kill()
+            break
+        if now >= next_beat:
+            print(f"[ensure] {step}: still waiting "
+                  f"({int(now - started)}s elapsed)", file=sys.stderr,
+                  flush=True)
+            next_beat = now + heartbeat
+        time.sleep(0.5)
+    out, err = proc.communicate()
+    if timed_out:
+        return {
+            "ok": False,
+            "error": "timeout",
+            "message": f"'{' '.join(argv)}' did not finish within "
+                       f"{int(timeout)}s",
+            "advice": ("sample may be too large for one-shot ensure. "
+                       "Retry with a larger --timeout, load without analysis "
+                       "(passthrough: load <binary> --no-analyze) and analyze "
+                       "selectively, or poll `status <binary>` later to check "
+                       "whether the daemon finished in the background"),
+            "cmd": cmd,
+        }
+    return _parse_rpc_output(out, err, proc.returncode, cmd)
 
 
 def emit(data: dict, out_path: str | None) -> int:
@@ -115,8 +177,14 @@ def _binary_key(resp: dict) -> str | None:
     return result.get("binary")
 
 
-def ensure_binary(env, binary: Path) -> dict:
-    """Idempotent: daemon running + binary loaded. Returns the payload dict."""
+def ensure_binary(env, binary: Path, timeout: float | None = None,
+                  heartbeat: float = 12.0) -> dict:
+    """Idempotent: daemon running + binary loaded. Returns the payload dict.
+
+    Long start/load waits print a heartbeat line to stderr every
+    ``heartbeat`` seconds. ``timeout`` (seconds) caps each wait step
+    (default: 300 s for daemon start, 3600 s for load+analyze).
+    """
     if not binary.is_file():
         return {"ok": False, "error": f"binary not found: {binary}"}
     gpr = project_for(binary)
@@ -126,7 +194,10 @@ def ensure_binary(env, binary: Path) -> dict:
                    or status.get("running"))
     started = False
     if not running:
-        start = run_rpc(env, gpr, ["start", "--headless", "--detach"], timeout=300)
+        start = run_rpc_progress(
+            env, gpr, ["start", "--headless", "--detach"],
+            timeout=timeout if timeout is not None else 300,
+            heartbeat=heartbeat, label="daemon start")
         if not start.get("ok"):
             return {"ok": False, "error": "daemon start failed",
                     "detail": start}
@@ -139,15 +210,33 @@ def ensure_binary(env, binary: Path) -> dict:
                 or binary.name in b.get("name", "")), None)
     loaded = False
     if key is None:
-        load = run_rpc(env, gpr, ["load", str(binary)], timeout=3600)
+        load = run_rpc_progress(
+            env, gpr, ["load", str(binary)],
+            timeout=timeout if timeout is not None else 3600,
+            heartbeat=heartbeat, label="load/analyze")
         if not load.get("ok"):
             hint = ""
             if ".dsh" in str(binary) or str(binary).startswith(str(HOME / ".dsh")):
                 hint = (" binary lives under a dotted path element "
                         "(~/.dsh/...) — copy it out of the dsh config tree "
                         "before loading.")
-            return {"ok": False, "error": "load failed" + hint,
-                    "detail": load}
+            result = {"ok": False, "error": "load failed" + hint,
+                      "detail": load}
+            # The ghidra-rpc client's own socket timeout (120 s default for
+            # load) can fire before the daemon finishes analysing a large
+            # binary; the daemon usually keeps going in the background.
+            err_text = (str(load.get("error", "")) + " "
+                        + str(load.get("message", ""))).lower()
+            if "timeout" in err_text or "timed out" in err_text:
+                result["advice"] = (
+                    "sample may be too large for the default socket budget. "
+                    "The daemon often keeps analysing in the background — "
+                    "poll `status <binary>` / retry `ensure` in a minute. "
+                    "For a longer upfront budget: passthrough "
+                    "`load <binary> --analysis-timeout N` (also raises the "
+                    "socket timeout), or `load <binary> --no-analyze` and "
+                    "analyse selectively.")
+            return result
         key = _binary_key(load)
         loaded = True
 
@@ -161,8 +250,8 @@ def ensure_binary(env, binary: Path) -> dict:
     }
 
 
-def cmd_ensure(env, binary: Path, out_path) -> int:
-    return emit(ensure_binary(env, binary), out_path)
+def cmd_ensure(env, binary: Path, out_path, timeout: float | None = None) -> int:
+    return emit(ensure_binary(env, binary, timeout=timeout), out_path)
 
 
 def main(argv: list[str]) -> int:
@@ -179,9 +268,23 @@ def main(argv: list[str]) -> int:
     sub = args[0]
 
     if sub == "ensure":
-        if len(args) < 2:
-            return emit({"ok": False, "error": "usage: ensure <binary>"}, out_path)
-        return cmd_ensure(env, Path(args[1]).resolve(), out_path)
+        rest_args = list(args[1:])
+        ensure_timeout = None
+        if "--timeout" in rest_args:
+            i = rest_args.index("--timeout")
+            try:
+                ensure_timeout = float(rest_args[i + 1])
+            except (IndexError, ValueError):
+                return emit({"ok": False,
+                             "error": "usage: ensure <binary> [--timeout SECONDS]"},
+                            out_path)
+            del rest_args[i:i + 2]
+        if not rest_args:
+            return emit({"ok": False,
+                         "error": "usage: ensure <binary> [--timeout SECONDS]"},
+                        out_path)
+        return cmd_ensure(env, Path(rest_args[0]).resolve(), out_path,
+                          timeout=ensure_timeout)
 
     if sub in ("status", "stop"):
         gpr = project_for(Path(args[1]).resolve()) if len(args) > 1 else None

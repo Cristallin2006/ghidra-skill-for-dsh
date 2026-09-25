@@ -59,38 +59,93 @@ def _find_function(pi, name_or_address: str):
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
-    """Decompile a function and return its pseudo-C code."""
+    """Decompile a function and return its pseudo-C code.
+
+    Args (in ``args`` dict):
+        binary  -- program name / key
+        func    -- function name or hex address
+        timeout -- per-function decompiler timeout in seconds (default 60)
+        format  -- "json" (default) or "text". With "text" the pseudo-C is
+                   returned top-level under the "text" key so consumers do
+                   not have to guess the nested schema.
+
+    Return schema (format="json", success):
+        name      -- function name (str)
+        address   -- entry point address (str)
+        signature -- decompiler-recovered signature (str)
+        c_code    -- pseudo-C source (str). Absent on failure.
+
+    Return schema (format="text", success):
+        name      -- function name (str)
+        address   -- entry point address (str)
+        text      -- pseudo-C source, plain text (str). Absent on failure.
+
+    Return schema (failure, either format):
+        name      -- function name (str), when the function was resolved
+        address   -- entry point address (str), when resolved
+        error     -- human-readable failure text. ALWAYS carries the
+                     original exception/decompiler message (including Java
+                     exception text), never a bare exit-code-style summary.
+        c_code    -- None (format="json" only)
+
+    Errors raised before the function is resolved (bad binary key, unknown
+    function name) propagate as RPC-level errors (ok: false, message set).
+    """
     binary = args.get("binary", "")
     func_name = args.get("func", "")
     timeout = args.get("timeout", 60)
+    out_format = args.get("format", "json")
 
     if not func_name:
         raise ValueError("Missing required argument: func")
+    if out_format not in ("json", "text"):
+        raise ValueError(f"Invalid format '{out_format}': expected 'json' or 'text'")
 
     pi = ctx.get_program(binary)
     func = _find_function(pi, func_name)
 
+    base = {
+        "name": str(func.getName()),
+        "address": str(func.getEntryPoint()),
+    }
+
     from ghidra.util.task import TaskMonitor
 
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+    try:
+        with pi.decompiler_pool.acquire() as decompiler:
+            result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+    except Exception as e:
+        # Java/bridge exceptions: str(e) carries the original text — never
+        # collapse it to a generic code.
+        if out_format == "text":
+            return {**base, "error": f"decompile raised: {type(e).__name__}: {e}"}
+        return {**base, "c_code": None,
+                "error": f"decompile raised: {type(e).__name__}: {e}"}
 
     error_msg = result.getErrorMessage()
     if error_msg and error_msg.strip():
-        return {
-            "name": str(func.getName()),
-            "address": str(func.getEntryPoint()),
-            "c_code": None,
-            "error": error_msg,
-        }
+        if out_format == "text":
+            return {**base, "error": error_msg}
+        return {**base, "c_code": None, "error": error_msg}
 
     decompiled = result.getDecompiledFunction()
-    c_code = str(decompiled.getC()) if decompiled else ""
+    if decompiled is None:
+        # No error message and no result: report that explicitly instead of
+        # returning an empty c_code string that looks like success.
+        msg = "decompiler returned no result (no error message); " \
+              "the function may have hit an internal decompiler limit"
+        if out_format == "text":
+            return {**base, "error": msg}
+        return {**base, "c_code": None, "error": msg}
+
+    c_code = str(decompiled.getC())
+
+    if out_format == "text":
+        return {**base, "text": c_code}
 
     return {
-        "name": str(func.getName()),
-        "address": str(func.getEntryPoint()),
-        "signature": str(decompiled.getSignature()) if decompiled else str(func.getSignature()),
+        **base,
+        "signature": str(decompiled.getSignature()),
         "c_code": c_code,
     }
 

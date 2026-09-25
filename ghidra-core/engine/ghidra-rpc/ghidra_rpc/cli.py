@@ -500,9 +500,21 @@ def binary_metadata(binary: str, project: str | None):
 @click.argument("func")
 @click.option("--timeout", "-t", type=int, default=120, show_default=True,
               help="Decompiler timeout in seconds (120 s default; increase for large firmware functions).")
+@click.option("--format", "out_format",
+              type=click.Choice(["json", "text"], case_sensitive=False),
+              default="json", show_default=True,
+              help="'json' returns pseudo-C under the 'c_code' key; 'text' "
+                   "returns it top-level under 'text' (no nested key guessing). "
+                   "Failures always include the original error text in 'error'.")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
-def decompile(binary: str, func: str, timeout: int, project: str | None):
+def decompile(binary: str, func: str, timeout: int, out_format: str,
+              project: str | None):
     """Decompile a function to pseudo-C.
+
+    Success schema (json): {name, address, signature, c_code}.
+    Success schema (text): {name, address, text}.
+    Failure schema:        {name, address, error, c_code: null} — 'error'
+    always carries the original decompiler/Java exception text.
 
     If decompile returns bad-instruction warnings, try `pcode --high` as a
     fallback: the P-code engine re-decodes bytes from the function object's
@@ -511,6 +523,7 @@ def decompile(binary: str, func: str, timeout: int, project: str | None):
     """
     _rpc_command(_resolve_project(project), "decompile", {
         "binary": binary, "func": func, "timeout": timeout,
+        "format": out_format,
     })
 
 
@@ -573,11 +586,18 @@ def search_symbols(binary: str, query: str, limit: int, offset: int, project: st
                    "(e.g. a method defined here but called from a different dex) "
                    "and merge in real callers found there. Each result then "
                    "carries a 'binary' field.")
+@click.option("--follow-fatptr", "follow_fatptr", is_flag=True, default=False,
+              help="For Rust/Go {ptr, len} fat pointers: when a DATA xref's "
+                   "from-address holds a pointer back to the target, treat it "
+                   "as a descriptor and also return second-hop references to "
+                   "the descriptor (tagged hop=2, via=<descriptor addr>).")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
-def xrefs_to(binary: str, target: str, limit: int, all_binaries: bool, project: str | None):
+def xrefs_to(binary: str, target: str, limit: int, all_binaries: bool,
+             follow_fatptr: bool, project: str | None):
     """Find cross-references TO a target."""
     _rpc_command(_resolve_project(project), "xrefs_to", {
-        "binary": binary, "target": target, "limit": limit, "all_binaries": all_binaries,
+        "binary": binary, "target": target, "limit": limit,
+        "all_binaries": all_binaries, "follow_fatptr": follow_fatptr,
     })
 
 

@@ -31,6 +31,16 @@ KS="$HOME/.android/debug.keystore"                            # 重签用（andr
 - host frida 17.18.0 已装；**frida-server（android 版）必须与 host 严格同版本，当前未装** → frida 档默认不可用，先 `python "$SK/doctor.py"` 看 toolchain 节（SK 路径见 ghidra-core），缺失按其 hint 装，不要硬试
 - Windows 环境坑（`adb screencap` 禁止 `>` 重定向、PS 引号、后台超时等）→ ghidra-core `references/windows-powershell.md`，本 skill 只写命令形态
 
+## 脚本索引（`scripts/`，均包官方工具/androguard，工具缺失 exit 3 优雅降级）
+
+| 脚本 | 一句话 |
+|---|---|
+| `scripts/apk_triage.py` | APK 一条命令分诊：签名（apksigner）/ Manifest（aapt2+apkanalyzer）/ 逐 dex 自有类统计（androguard）/ 可疑 API / flag 形态全扫 |
+| `scripts/axml_decompile.py` | 二进制 AndroidManifest.xml → 文本：APK 走 aapt2 → apkanalyzer → androguard；裸 AXML 走 androguard |
+| `scripts/dex_triage.py` | 多 dex 类/方法/字符串枚举 + `--pkg` 前缀过滤 + `--scan` 关键词扫描（androguard 或 apkanalyzer） |
+| `scripts/dex_disasm.py` | Dalvik 反汇编（包 `apkanalyzer dex code`，不手写 opcode 表）；`--selftest` 内置 fixture 自检，不过 exit 2 禁止引用 |
+| `scripts/apk_oracle.py` | 一键真机 oracle：AVD/emulator/adb 全自动，逐候选 input→回读→点击→dump+screencap 判定，正负对照成对出报告 |
+
 ## 流程
 
 ### 1. 分诊（细则 → `references/apk-triage.md`）
