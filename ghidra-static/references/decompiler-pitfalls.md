@@ -17,7 +17,7 @@
 
 | 伪码表现 | 判定 | 核查配方 |
 |---|---|---|
-| `Could not recover jumptable` + 间接 `JMP` 渲染成间接 `CALL` | ❌ 真失败（语义错误） | 读表字节 + 手工解 `rel32`（§3④） |
+| `Could not recover jumptable` + 间接 `JMP` 渲染成间接 `CALL` | ❌ 真失败（语义错误） | `jt_resolve.py` 一键解 + 人工抽查（§3④） |
 | **只暴露多张跳转表里的一张** | ❌ 真失败（更隐蔽） | 反汇编搜 `LEA RAX,[0x44....]` + `JMP RAX` 找全部表基址；两张表共用同一索引时**只解一张 = 解错一半** |
 | 重叠栈槽同名：`local_3e8` 既是 256 字节缓冲区又是 `{len,ptr,cap}` 结构 | ❌ 真失败 | 按 `[RSP+off]` 手工重建栈帧，变量名永远不可信 |
 | 常量渲染漂移：`&DAT_0000xxxx`（小整数/长度渲染成地址）、`case 100:`（实为 `0x64`）、偏移错几字节 | ❌ 真失败 | `read_views.py --expect-hex "<渲染文本>"`，不符则渲染文本**整体作废** |
@@ -35,9 +35,9 @@
 **③ 骨架化去噪**：向量化比较 → `memcmp`；std 样板（`find` 两路搜索、Vec 增长、`expect` panic 桩、bounds check）→ `skip`。**判据**："每个字符都读懂了但不知道在干嘛" = 这一层——识别形状，不要读实现。
 
 **④ 定点核验**（fatal 处与常量处）：
-- 跳转表：解【所有】表基址（`LEA` 扫描 + `read-bytes` 解 rel32），每个 target 必须落在同函数 basic-block 起始处（`basic-blocks` 交叉验证）
-- 常量/长度：一律走 `read_views.py --expect-hex/--expect-len`，过不了的过 `crypto_sanity.py check`（长度不合法 exit 2 = 第一嫌疑人是读数）
-- 栈槽归属：从入口 `SUB RSP,0xNNN` 起算全部 `[RSP+off]`
+- 跳转表：`jt_resolve.py <bin> <分发点>` 一键解【所有】表基址 + 人工抽查。**CFG 交叉验证有前置条件**：Ghidra 没恢复跳转表时 case 体往往尚未反汇编，target 全落「未反汇编间隙」，CFG 校验无从谈起——先对 target 强制反汇编（`disassemble <addr> --force`），能恢复才做 basic-block 交叉验证；恢复不了就用「索引范围 + 目标区间连续性」作为替代判据。只解一张 = 解错一半
+- 常量/长度：一律走 `read_views.py --expect-hex/--expect-len` + `const_audit.py` 扫渲染嫌疑，过不了的过 `crypto_sanity.py check`（长度不合法 exit 2 = 第一嫌疑人是读数）
+- 栈槽归属：`frame_map.py <bin> <func>` 出槽位归属表（同槽多宽度自动标可疑）；手工对照时从入口 `SUB RSP,0xNNN` 起算全部 `[RSP+off]`
 
 **⑤ 执行验证**（终极）：**能观测就别推断**。叶子函数 → `emulate-function`；整程序带 I/O → ghidra-core `references/unicorn-harness.md`；最终交付验证 → Wine/真机。
 
@@ -50,9 +50,9 @@
 | 3 | 每个跳转表的**所有**基址已解并交叉验证 | §3④ a/b/c |
 | 4 | 同一区域二次回访带 `--delta` | `ledger.py observe` |
 | 5 | 承重结论有执行验证或字节验证 | §3⑤ |
-| 6 | **「这是工具的错」这类归因也有证据** | 配一条能证伪它的命令 |
+| 6 | **归因 / 更正 / 撤回也有证据** | 配一条能证伪它的命令 |
 
-第 6 条是活教材：一处复盘里两处"反编译器的错"复核后只有一处成立，另一处是自己噪声拟合——**归因本身也是结论，也要验证**。
+第 6 条是活教材：一处复盘里两处"反编译器的错"复核后只有一处成立，另一处是自己噪声拟合。**「我觉得应该更正/撤回一下」比「这是工具的错」更容易被放过**——它披着自我批评的外衣（同一失效模式在 happyVm 复盘连撞 4 次：递归调用归因、跳转表项数、漂移归因、更正后的地址也错）。归因、更正、撤回本身都是结论，都要验证。
 
 ## 5. 决策树（什么时候根本不该读伪码）
 
@@ -71,6 +71,9 @@
 | `decomp_lint.py` | 阶段①：fatal 清单 + 危险渲染计数 |
 | `call_histogram.py` | 决策树：CALL 目标直方图定位重复调用点 |
 | `read_views.py` | L0 权威读数 + `--expect-hex/--expect-len` 对照 |
+| `jt_resolve.py` | 阶段④：跳转表全基址一键解析（替代手工解 rel32） |
+| `frame_map.py` | 阶段④：栈帧槽位归属表，同槽多宽度自动标可疑 |
+| `const_audit.py` | 阶段④ + 质量门 #2：伪码常量渲染嫌疑扫描 |
 
 ## 7. 一页速查
 
@@ -78,9 +81,10 @@
 ① 体检   decompile-all → decomp_lint.py        → 拿 fatal 清单，先排除那 6%
 ② 修视图 set-signature / create-struct / 重命名 → 重新反编译（迭代，标对一层噪声成片消失）
 ③ 骨架化 向量化→memcmp、std 样板→skip、panic 桩→skip（识别形状，不读实现）
-④ 定点核 跳转表解【所有】基址 + CFG 交叉验证；常量走 read_views --expect-*
-⑤ 跑它   能观测就别推断：叶子 emulate-function / 整程序 unicorn-harness / 最终 Wine
-门禁     无 fatal / 常量过 L0 / 表全解 / 回访带 delta / 承重结论有执行证据 / 归因也有证据
+④ 定点核 跳转表 jt_resolve 一键解【所有】基址（target 落间隙先 disassemble --force 再 CFG 验证）；
+         常量 read_views --expect-* + const_audit；栈槽 frame_map
+⑤ 跑它   能观测就别推断：叶子 emulate-function / 整程序 emulate_program.py / 最终 Wine
+门禁     无 fatal / 常量过 L0 / 表全解 / 回访带 delta / 承重结论有执行证据 / 归因·更正·撤回也有证据
 ```
 
 ---

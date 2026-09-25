@@ -18,6 +18,14 @@ Host-side tool (any Python 3.8+, stdlib only). 伪码只暴露部分表基址，
 验证：落块 / 落指令 / 落间隙（未反汇编的 case 体，符合预期）/ 越界，
 连续 2 项越界 = 表结束信号。
 
+索引位宽推断（审计问题 2）：读表没有终止判据会过量——happyVm 表
+0x442ba0 容量 20 项，但分发点 `SHR AL,0x6`（AL 8 位）把索引恒限在
+0..3。本工具对 LEA+索引读 命中的候选，正向扫描分发点反汇编，识别
+SHR reg,k / AND reg,mask（可经 MOV/MOVZX 串联）的位宽收窄序列，输出
+两个数：`项数 20（表容量）/ 实际用到 4（索引 (x>>6)&3）`；超出索引
+范围的项标注为死项（列出但不参与 case 阅读）。推不出位宽时只报表容量
+并标注「索引位宽未识别」。
+
 Usage:
   python rpc_driver.py ensure <binary>          # daemon 未起时先 ensure
   python jt_resolve.py <binary> <func-addr> [--table-bits 32] [--json out]
@@ -121,9 +129,138 @@ LEA_RE = re.compile(r"^([A-Z][A-Z0-9]+),\[0x([0-9a-fA-F]+)\]$")
 JT_WARN_RE = re.compile(r"Could not recover jumptable at (0x[0-9a-fA-F]+)")
 PSEUDO_TABLE_RE = re.compile(r"&DAT_00([0-9a-fA-F]{6})\s*\+\s*\w+\s*\*\s*4")
 
+# x86-64 GPR 别名归族：别名 -> (基名, 位宽)。位宽推断按族追踪，
+# SHR AL,0x6 与 MOVZX R13D,AL 必须识别为同一寄存器。
+_REG_ALIAS = {}
+
+
+def _build_reg_alias():
+    groups = {
+        "RAX": ("RAX", "EAX", "AX", "AL", "AH"),
+        "RBX": ("RBX", "EBX", "BX", "BL", "BH"),
+        "RCX": ("RCX", "ECX", "CX", "CL", "CH"),
+        "RDX": ("RDX", "EDX", "DX", "DL", "DH"),
+        "RSI": ("RSI", "ESI", "SI", "SIL"),
+        "RDI": ("RDI", "EDI", "DI", "DIL"),
+        "RBP": ("RBP", "EBP", "BP", "BPL"),
+        "RSP": ("RSP", "ESP", "SP", "SPL"),
+    }
+    widths = (64, 32, 16, 8, 8)
+    for base, names in groups.items():
+        for i, n in enumerate(names):
+            _REG_ALIAS[n] = (base, widths[i])
+    for i in range(8, 16):
+        base = "R%d" % i
+        for suffix, w in (("", 64), ("D", 32), ("W", 16), ("B", 8)):
+            _REG_ALIAS[base + suffix] = (base, w)
+
+
+_build_reg_alias()
+
+
+def _fmt_const(v):
+    return "0x%x" % v if v > 9 else str(v)
+
+
+_SLOT_RE = re.compile(r"\[([^\]]+)\]")
+
+
+def _slot_key(op):
+    """内存操作数归一化成槽位键（去尺寸前缀与空白），用于追踪
+    `MOV [RSP+0x50],RCX` 存 / `MOV RCX,[RSP+0x50]` 取的位宽信息接力——
+    编译器常把收窄后的索引 spill 到栈槽，另一张表的分发点再从槽里取回。"""
+    m = _SLOT_RE.search(op or "")
+    if not m:
+        return None
+    return "M:" + re.sub(r"\s+", "", m.group(1)).upper()
+
+
+def infer_index_range(insns, idx_reg, stop):
+    """从分发点反汇编反推索引用到的位宽（审计问题 2）。
+
+    正向扫描 insns[:stop]，对 idx_reg 所属寄存器族追踪位宽收窄序列：
+    SHR reg,k / AND reg,mask（可经 MOV/MOVZX 串联，如
+    MOV EAX,R13D; SHR AL,0x6; MOVZX R13D,AL → 索引 (x>>6)&3）。
+    返回 (max_index, 表达式文本)；推不出（无收窄线索）返回 None。
+    """
+    fam = _REG_ALIAS.get(idx_reg.upper())
+    if fam is None:
+        return None
+    base = fam[0]
+    info = {}  # 寄存器基名 -> {"bits": w, "shr": s, "mask": m|None}
+    for ins in insns[:stop]:
+        mnem = (ins.get("mnemonic") or "").upper()
+        ops = [o.strip() for o in (ins.get("operands") or "").split(",")]
+        d = _REG_ALIAS.get(ops[0].upper()) if ops and ops[0] else None
+        if mnem in ("MOV", "MOVZX", "MOVSXD") and len(ops) == 2:
+            d_slot = None if d else _slot_key(ops[0])
+            if not d and not d_slot:
+                continue
+            s = _REG_ALIAS.get(ops[1].upper())
+            s_slot = None if s else _slot_key(ops[1])
+            if s and s[0] in info:
+                cur = dict(info[s[0]])
+                cur["bits"] = min(cur["bits"], s[1])
+            elif s_slot and s_slot in info:
+                cur = dict(info[s_slot])
+            elif s:
+                cur = {"bits": s[1], "shr": 0, "mask": None}
+            else:
+                cur = None
+            key = d[0] if d else d_slot
+            if cur is None:
+                info.pop(key, None)
+            elif d_slot or d[1] >= 32 or d[0] not in info:
+                # 整宽写入/槽位写入覆盖追踪；子寄存器写入仅在无更宽
+                # 追踪时采纳
+                info[key] = dict(cur, bits=min(cur["bits"], d[1] if d else 64))
+        elif mnem in ("SHR", "SAR") and len(ops) == 2 and d:
+            try:
+                k = (int(ops[1], 16) if ops[1].lower().startswith("0x")
+                     else int(ops[1]))
+            except ValueError:
+                info.pop(d[0], None)  # SHR reg,CL 变量位移 → 无法推断
+                continue
+            prev = info.get(d[0])
+            info[d[0]] = {
+                "bits": min(prev["bits"], d[1]) if prev else d[1],
+                "shr": (prev["shr"] + k) if prev else k,
+                "mask": prev["mask"] if prev else None,
+            }
+        elif mnem == "AND" and len(ops) == 2 and d:
+            try:
+                m = (int(ops[1], 16) if ops[1].lower().startswith("0x")
+                     else int(ops[1]))
+            except ValueError:
+                info.pop(d[0], None)
+                continue
+            prev = info.get(d[0])
+            pm = prev["mask"] if prev else None
+            info[d[0]] = {
+                "bits": min(prev["bits"], d[1]) if prev else d[1],
+                "shr": prev["shr"] if prev else 0,
+                "mask": m if pm is None else (pm & m),
+            }
+        elif d and mnem not in ("CMP", "TEST"):
+            info.pop(d[0], None)  # 其它写该族寄存器的操作 → 追踪失效
+    cur = info.get(base)
+    if not cur:
+        return None
+    if not cur["shr"] and cur["mask"] is None and cur["bits"] >= 32:
+        return None  # 全宽索引，等于没有收窄线索
+    maxval = ((1 << cur["bits"]) - 1) >> cur["shr"]
+    if cur["mask"] is not None:
+        maxval &= cur["mask"]
+    if cur["shr"]:
+        expr = "(x>>%d)&%s" % (cur["shr"], _fmt_const(
+            cur["mask"] if cur["mask"] is not None else maxval))
+    else:
+        expr = "x&%s" % _fmt_const(maxval)
+    return maxval, expr
+
 
 def find_candidates(insns, c_code):
-    """返回 {表基址: 线索描述}。"""
+    """返回 {表基址: {"clue": 线索描述, "idx": (索引寄存器, 指令位置)|None}}。"""
     cand = {}
     for i, ins in enumerate(insns):
         if ins.get("mnemonic") != "LEA":
@@ -132,15 +269,21 @@ def find_candidates(insns, c_code):
         if not m:
             continue
         reg, base = m.group(1), int(m.group(2), 16)
+        idx_re = re.compile(r"\[%s\s*\+\s*([A-Za-z][A-Za-z0-9]*)\s*\*\s*0x4\]"
+                            % reg)
         for j in range(i + 1, min(i + 11, len(insns))):
             ops = insns[j].get("operands") or ""
-            indexed = ("[%s + " % reg in ops) and ("*0x4]" in ops)
+            im = idx_re.search(ops)
             jumped = insns[j].get("mnemonic") == "JMP" and reg in ops
-            if indexed or jumped:
-                cand.setdefault(base, "LEA@0x%x" % int(ins["address"], 16))
+            if im or jumped:
+                cand.setdefault(base, {
+                    "clue": "LEA@0x%x" % int(ins["address"], 16),
+                    "idx": (im.group(1), j) if im else None,
+                })
                 break
     for m in PSEUDO_TABLE_RE.finditer(c_code or ""):
-        cand.setdefault(int(m.group(1), 16), "伪码 &DAT_00%s *4 渲染" % m.group(1))
+        cand.setdefault(int(m.group(1), 16), {
+            "clue": "伪码 &DAT_00%s *4 渲染" % m.group(1), "idx": None})
     return cand
 
 
@@ -219,7 +362,8 @@ def main():
     print("指令 %d 条 | 基本块 %d 个 | 范围 0x%x..0x%x"
           % (len(insns), len(block_starts), lo, hi))
     print("[线索] 候选表基址 %d 个: %s"
-          % (len(cand), ", ".join("0x%x(%s)" % (b, s) for b, s in sorted(cand.items())) or "无"))
+          % (len(cand), ", ".join("0x%x(%s)" % (b, c["clue"])
+                                   for b, c in sorted(cand.items())) or "无"))
     print("[线索] 伪码 jumptable 警告 %d 处: %s"
           % (len(warns), ", ".join(warns) or "无"))
 
@@ -233,6 +377,13 @@ def main():
             continue
         t = decode_table(a.binary, base, block_starts, insn_starts, lo, hi, limit)
         if t:
+            idx = cand[base].get("idx")
+            if idx:
+                rng = infer_index_range(insns, idx[0], idx[1])
+                if rng:
+                    maxval, expr = rng
+                    t["index"] = {"max": maxval, "expr": expr,
+                                  "used": min(len(t["entries"]), maxval + 1)}
             tables.append(t)
         else:
             failed.append((base, "解码后不足 2 项有效 target"))
@@ -243,10 +394,18 @@ def main():
         verdict = ("全部落块（可信）" if all(s == "落块" for s in sts) else
                    "部分可疑（%d 项越界残留）" % sts.count("越界") if "越界" in sts else
                    "全部落函数范围（其中 %d 项落在未反汇编间隙 = 未恢复 case 体）" % gaps)
-        print("\n表 #%d 基址 0x%x  模式 %s  项数 %d  验证: %s"
-              % (n, t["base"], t["mode"], len(t["entries"]), verdict))
+        idx = t.get("index")
+        if idx:
+            size = "项数 %d（表容量）/ 实际用到 %d（索引 %s）" % (
+                len(t["entries"]), idx["used"], idx["expr"])
+        else:
+            size = "项数 %d（表容量，索引位宽未识别）" % len(t["entries"])
+        print("\n表 #%d 基址 0x%x  模式 %s  %s  验证: %s"
+              % (n, t["base"], t["mode"], size, verdict))
         for i, tgt, st in t["entries"]:
             note = "" if st == "落块" else "  <- %s" % st
+            if idx and i >= idx["used"]:
+                note += "  <- 死项（超出索引范围 0..%d）" % idx["max"]
             print("  [%2d] 0x%x%s" % (i, tgt, note))
     for base, why in failed:
         print("\n候选 0x%x 解析失败: %s" % (base, why))
@@ -256,8 +415,11 @@ def main():
           % (len(cand), len(tables)))
     if a.json:
         json.dump({"function": fname, "warnings": warns,
-                   "candidates": {"0x%x" % b: s for b, s in sorted(cand.items())},
+                   "candidates": {"0x%x" % b: c["clue"]
+                                  for b, c in sorted(cand.items())},
                    "tables": [{"base": "0x%x" % t["base"], "mode": t["mode"],
+                               "capacity": len(t["entries"]),
+                               "index": t.get("index"),
                                "targets": ["0x%x" % x for _, x, _ in t["entries"]]}
                               for t in tables],
                    "failed": [{"base": "0x%x" % b, "reason": w} for b, w in failed]},

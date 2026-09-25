@@ -2,8 +2,8 @@
 """const_audit.py - 伪码常量对照审计（happyVm 复盘 §9.6）。
 
 Host-side tool (any Python 3.8+, stdlib only). 反编译器的常量渲染会漂移：
-happyVm 样本 255 处小整数被渲染成地址（&DAT_00000006 实为长度 6），
-local_7d8 = 0x442f99 实为 0x442f9c——必须机械化对照，不许肉眼认账。
+happyVm 样本 255 处小整数被渲染成地址（&DAT_00000006 实为长度 6）——
+必须机械化对照，不许肉眼认账。
 
 三类审计：
   A) &DAT_0000xxxx  小整数渲染成地址：直接给出真实小整数值；
@@ -11,7 +11,10 @@ local_7d8 = 0x442f99 实为 0x442f9c——必须机械化对照，不许肉眼�
      "伪码渲染文本 vs 实际字节" 对照行；地址不可读时按 memory-map
      区分 .bss 未初始化全局（合法）与真正的渲染漂移；
   C) (xxx **)0xXXXXXX 指针化字面值：读该地址及前 4 字节上下文，
-     落在 ASCII 串中部 = 渲染漂移嫌疑（0x442f99 类）。
+     落在 ASCII 串中部先判"中部嫌疑"，再 xrefs-to 查反汇编——存在
+     真实 LEA/imm 引用则降级为「合法常量（字符串中部指针）」（如
+     happyVm 0x442f99 = "DASCTF{" 的 "ASCTF{" 后缀 needle，0x40bffd
+     的 LEA 真实立即数，非漂移）；反汇编找不到对应立即数才标漂移。
 
 Usage:
   python rpc_driver.py ensure <binary>          # daemon 未起时先 ensure
@@ -109,6 +112,26 @@ def fetch_segments(binary):
         return []
 
 
+def has_code_ref(binary, addr):
+    """xrefs-to 检查该地址是否被真实指令（LEA/立即数）引用过（审计问题 5）。
+
+    指向字符串中部的合法指针（Rust/Go two-way、memchr、后缀比较的 needle）
+    在反汇编里必有真实 LEA/imm 引用；只有伪码里出现地址、反汇编里找不到
+    对应立即数时才是渲染漂移。返回 (是否被引用, 来源描述)；查询失败按
+    无引用处理（保守，不误抑制漂移判定）。
+    """
+    try:
+        res = rpc_call(binary, "xrefs-to", "0x%x" % addr)
+    except RpcError:
+        return False, None
+    for r in res.get("xrefs") or []:
+        if r.get("from_function"):
+            return True, "%s @ %s (%s)" % (r["from_function"],
+                                           r.get("from_address"),
+                                           r.get("type"))
+    return False, None
+
+
 def unreadable_verdict(segments, addr):
     """read-bytes 失败时区分 .bss 未初始化全局与真正的渲染漂移。"""
     for lo, hi, name, init in segments:
@@ -184,7 +207,7 @@ def main():
         report["data_refs"].append({"line": ln, "rendered": txt, "count": cnt,
                                     "verdict": verdict, "actual_hex": actual})
 
-    print("\n--- C) 指针化字面值（0x442f99 类渲染漂移）: %d 个 ---" % len(ptr_casts))
+    print("\n--- C) 指针化字面值（字符串中部指针/渲染漂移甄别）: %d 个 ---" % len(ptr_casts))
     for addr in sorted(ptr_casts):
         ln, txt, cnt = ptr_casts[addr]
         ctx = read_hex(a.binary, addr - 4, 20) if addr >= 4 else None
@@ -193,8 +216,14 @@ def main():
             verdict, actual = unreadable_verdict(segments, addr), None
         else:
             mid = (ctx is not None and 32 <= ctx[3] < 127 and 32 <= ctx[4] < 127)
-            verdict = ("漂移嫌疑：落在 ASCII 数据中部，真实地址很可能在附近"
-                       if mid else "对照行（可读，请按语义核对）")
+            if mid:
+                refd, src = has_code_ref(a.binary, addr)
+                verdict = ("合法常量（字符串中部指针，反汇编存在真实引用 %s）" % src
+                           if refd else
+                           "漂移嫌疑：落在 ASCII 数据中部且反汇编中无对应立即数，"
+                           "真实地址很可能在附近")
+            else:
+                verdict = "对照行（可读，请按语义核对）"
             actual = bs.hex()
         print("  行 %-5d %-10s x%d  判定: %s" % (ln, txt, cnt, verdict))
         if bs is not None:

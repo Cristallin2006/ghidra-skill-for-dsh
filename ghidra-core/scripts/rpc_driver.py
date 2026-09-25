@@ -17,7 +17,11 @@ Subcommands:
   stop   [binary]
   <anything else>     passed through to `ghidra-rpc`, with --project injected;
                       the binary path may be given as first arg and is mapped
-                      to its loaded key automatically when unambiguous
+                      to its loaded key automatically when unambiguous.
+                      `disassemble <binary> <addr> --force` force-disassembles
+                      at the exact address (jump-table targets whose case
+                      bodies were never disassembled); without --force the
+                      read-only next-instruction fallback is unchanged
 
 Environment is self-contained: GHIDRA_INSTALL_DIR / JAVA_HOME /
 GHIDRA_RPC_STATE_DIR / LOCALAPPDATA redirection and USERNAME=dsh are set here

@@ -22,6 +22,14 @@ def _handle_disassemble(ctx, args: dict) -> dict:
         with_instructions -- if true, also return the structured per-instruction
                              array (default false; ``listing`` alone carries the
                              same information at roughly a quarter the size)
+        force             -- if true and no instruction exists at ``address``,
+                             force-disassemble at that exact address first
+                             (Ghidra FlatProgramAPI.disassemble creates new
+                             instructions at any address — the jump-table-target
+                             case whose case bodies were never recovered).
+                             Falls back to the next-existing-instruction +
+                             warning behavior only when the bytes genuinely
+                             cannot be decoded. Default false (read-only).
 
     Returns a dict with:
         address      -- canonical start address
@@ -41,6 +49,7 @@ def _handle_disassemble(ctx, args: dict) -> dict:
     address_str       = args.get("address", "")
     count             = int(args.get("count", _DEFAULT_COUNT))
     with_instructions = bool(args.get("with_instructions", False))
+    force             = bool(args.get("force", False))
 
     if not address_str:
         raise ValueError("Missing required argument: address")
@@ -58,6 +67,32 @@ def _handle_disassemble(ctx, args: dict) -> dict:
     # at the requested address so we can warn the caller.
     instr        = listing.getInstructionAt(addr)
     actual_start = None  # set when we fall back to a different address
+    forced       = False
+    if instr is None and force:
+        # The highest-value case for this command is a jump-table target whose
+        # case body was never disassembled — forced disassembly creates the
+        # instruction at the exact requested address instead of skipping ahead.
+        from ghidra_rpc.server.tools.modifications import (
+            _maybe_swing,
+            ghidra_transaction,
+        )
+
+        def do_force_disassemble():
+            from ghidra.program.flatapi import FlatProgramAPI
+            with ghidra_transaction(
+                pi.program, f"ghidra-rpc: force disassemble @ {addr}"
+            ):
+                FlatProgramAPI(pi.program).disassemble(addr)
+
+        try:
+            _maybe_swing(ctx, do_force_disassemble)
+            instr = listing.getInstructionAt(addr)
+        except Exception:
+            instr = None
+        if instr is not None:
+            forced = True
+            pi.decompiler_pool.invalidate_all()
+            ctx.save_program(pi)
     if instr is None:
         instr = listing.getInstructionAfter(addr)
         if instr is not None:
@@ -137,6 +172,8 @@ def _handle_disassemble(ctx, args: dict) -> dict:
         "count":   len(instructions),
         "listing": _format_listing(instructions),
     }
+    if forced:
+        result["forced"] = True
     if with_instructions:
         result["instructions"] = instructions
     if actual_start:

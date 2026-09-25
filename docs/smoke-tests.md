@@ -20,3 +20,18 @@
 - 台账 schema：`ledger.py validate <bin>`（exit 0 = 全部条目符合最小 schema）——CI 回归的机械判据
 - 结构自检：`doctor.py --quick`（exit 0 = Ghidra 核心环境可用；toolchain 分层报告）
 - 触发评测（description 是否会被 agent 正确路由）属于 agent 行为层，用 skill-up/skill-comply 类评测框架跑，不在本文件范围
+
+## 脚本级冒烟用例（ghidra-core/scripts/）
+
+> 每个脚本一条；优先用 `--selftest`/fixture，无自带 fixture 的用 happyVm 样本（`SHA256 80f96be1…`，已知期望值来自 `Desktop/happyVm_skill修复审计.md` 附录 A）。
+
+| 脚本 | 输入 | 最小验证 |
+|---|---|---|
+| `emulate_program.py` | console 型校验 PE + `--break-success/--break-fail` | 正例命中成功断点、改末位的负例不命中（天然正负对照，禁止只跑正例） |
+| `jt_resolve.py` | 跳转表分发点地址（happyVm: `0x40aba0`） | 解出**双表** `0x442b90`+`0x442ba0`；`0x442ba0[0..3]` = `0x40adf9/0x40ae31/0x40ae4f/0x40ae79` |
+| `frame_map.py` | 大栈帧函数（happyVm: `0x40b2e0`） | 帧 `0xc48`；标出 `+0x80..0x90` 同槽多宽度可疑；`+0x49c` 失败计数器 |
+| `const_audit.py` | 含小整数渲染的函数（happyVm: `0x40b2e0`） | 抓到 `&DAT_00000007`（= 长度 7）类嫌疑；真实 `LEA` 立即数（如字符串中部指针）**不**报漂移 |
+| `call_histogram.py` | 反汇编 listing 文件（happyVm: main_asm.lst） | 头号命中 `0x40aba0` × 22（≥3 次高亮） |
+| `const_scan.py` | Cython/C 反编译 C 或 decompile-all @out JSON | 重建 `PyList_New/PyTuple_New` 字面量；小整数聚集告警（chal 复盘 L 表 48 项） |
+| `xor_scan.py` | 含单字节 XOR 层的 blob | Top N 命中正确密钥；`--dump` 产物可打印/magic 正确 |
+| `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；unicorn 缺失时 exit 3 且提示进 re-tools-venv |

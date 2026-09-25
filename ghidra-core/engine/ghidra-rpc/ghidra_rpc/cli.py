@@ -763,13 +763,18 @@ def assemble(binary: str, address: str, instructions: tuple,
               help="Number of instructions to list (max 1000)")
 @click.option("--with-instructions", "with_instructions", is_flag=True, default=False,
               help="Also return the structured per-instruction array")
+@click.option("--force", "force", is_flag=True, default=False,
+              help="Force-disassemble at ADDRESS when no instruction exists there "
+                   "(jump-table targets whose case bodies were never recovered). "
+                   "Falls back to the next existing instruction + warning only "
+                   "when the bytes genuinely cannot be decoded.")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
 def disassemble(binary: str, address: str, count: int, with_instructions: bool,
-                project: str | None):
+                force: bool, project: str | None):
     """Disassemble instructions starting at ADDRESS."""
     _rpc_command(_resolve_project(project), "disassemble", {
         "binary": binary, "address": address, "count": count,
-        "with_instructions": with_instructions,
+        "with_instructions": with_instructions, "force": force,
     })
 
 
