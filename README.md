@@ -22,6 +22,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 | `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、打桩 oracle 家族（单因子隔离）、模型差分校验、跨架构 qemu-user/gdb-multiarch、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
 | `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
 | `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
+| `docs` | 横向文档：`smoke-tests.md`（新脚本/新能力的最小冒烟判据——防"写了但永远不走"）、`legacy-plugin-pitfalls.md`（旧插件坑归档） |
 
 边界规则：执行代码在 core，场景 skill 只有方法论；知识存 `references/` 可 grep 的纯数据文件，路由靠触发点指针，不建"知识库 skill"。
 

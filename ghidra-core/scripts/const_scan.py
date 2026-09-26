@@ -42,7 +42,9 @@ PyLong 对象的指针槽。给出样本路径（须先 rpc_driver.py ensure）�
 经 daemon 读 DAT 槽里的指针，再按 PyLongObject 布局读 ob_digit 还原整数，
 预览/字面量直接打印 Python 值。CPython 版本布局自动判别（3.12 lv_tag vs
 pre-3.12 ob_size，按全体解析结果投票），可用 --py 强制。默认按 64 位指针
-解析（--ptr-size 4 可改）。
+解析（--ptr-size 4 可改）。**边界**：落在 .bss（initialized=False）的引用
+是运行期才填充的对象池，静态无文件字节可读——脚本会识别并明确报告，
+此类样本改走 ctf-patterns §12 元数据路线或运行期取数。
 
 Exit codes: 0 scan completed（含 --binary 模式下部分/全部引用还原失败——
 会附提示），1 usage error (missing file / malformed input)。
@@ -138,6 +140,21 @@ def read_bytes(binary, addr, length):
         return bytes.fromhex(res.get("hex") or "")
     except RpcError:
         return None
+
+
+def fetch_uninit_blocks(binary):
+    """memory-map 里 initialized=False 的块（.bss 等）区间表；失败返回空表。"""
+    try:
+        res = rpc_call(binary, "memory-map")
+        return [(int(s["start"], 16), int(s["end"], 16))
+                for s in res.get("segments") or []
+                if not s.get("initialized", True)]
+    except (RpcError, KeyError, ValueError):
+        return []
+
+
+def in_uninit(blocks, addr):
+    return any(lo <= addr <= hi for lo, hi in blocks)
 
 
 def _parse_pylong(digits):
@@ -259,6 +276,11 @@ def resolve_refs(binary, literals, ptr_size, py_layout):
                            "（读不到内存或不是 PyLong——可能是 str/bytes 缓存对象）")
     stats["resolved"] = len(resolved)
     stats["unresolved"] = [n for n in refs if n not in resolved]
+    # .bss 识别：未解析的 ref 落在 initialized=False 块里 = 运行期才填充的
+    # 对象池，静态永远读不出来——这不是 daemon 问题，提示要走元数据路线
+    uninit = fetch_uninit_blocks(binary)
+    stats["unresolved_in_bss"] = [n for n in stats["unresolved"]
+                                  if in_uninit(uninit, addrs[n])]
     return stats, layout_used
 
 
@@ -554,9 +576,18 @@ def main() -> int:
               f"已还原 {resolve_stats['resolved']} 个"
               f"（CPython 布局: {resolve_stats['layout']}）")
         if resolve_stats["resolved"] == 0:
-            print("[提示] 0 个还原成功——先确认 daemon 已拉起"
-                  "（rpc_driver.py ensure <binary>）且 --binary 路径与"
-                  " ensure 的是同一样本；若布局判别异常可用 --py 311/312 强制。")
+            n_bss = len(resolve_stats.get("unresolved_in_bss") or [])
+            if n_bss:
+                print(f"[提示] {n_bss}/{resolve_stats['refs']} 个未解析引用落在 .bss"
+                      "（initialized=False，静态无文件字节）——这是运行期才填充的"
+                      "对象池，静态还原对它们**原则上不可能**，不是 daemon 问题。"
+                      "改走：ctf-patterns §12 元数据（`__Pyx_InitCachedConstants` / "
+                      "`_Pyx_PyCode_New` 的 co_varnames）或运行期取数"
+                      "（本机 import 后 `dir()`/`__dict__`、gdb 帧槽位）。")
+            else:
+                print("[提示] 0 个还原成功——先确认 daemon 已拉起"
+                      "（rpc_driver.py ensure <binary>）且 --binary 路径与"
+                      " ensure 的是同一样本；若布局判别异常可用 --py 311/312 强制。")
     print()
 
     if all_literals:

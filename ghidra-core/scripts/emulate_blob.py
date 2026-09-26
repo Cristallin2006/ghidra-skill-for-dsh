@@ -18,7 +18,9 @@ Usage:
       [--hook-rip-log N]
 
 Exit codes: 0 emulation finished (any stop reason, read the report),
-2 usage error, 3 unicorn not installed, 4 harness error (not the guest).
+2 usage error, 3 unicorn not installed, 4 harness error (not the guest:
+blob/map-file unreadable or empty, unknown --reg, mapping failed, or
+entry-unmapped — 0 instructions fetched because entry is not mapped).
 """
 from __future__ import annotations
 
@@ -273,7 +275,7 @@ def main():
         print("  JSON -> %s" % a.json)
     if state["entry_unmapped"]:
         print("  [harness 配置错] 入口未映射，本次仿真无效——修正 --base/--entry 后重跑")
-        return 3
+        return 4
     return 0
 
 

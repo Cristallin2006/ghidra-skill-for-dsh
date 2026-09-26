@@ -34,7 +34,7 @@
 - `apply_c_types.py` —— 解析出 14 个类型（`/aegis_hdr`、`/aegis_op` + 12 个 stdint typedef）
 - `apply_data_type.py` —— 需前一步**已落盘**，见 SKILL.md §5 类型库两步走
 
-**脚本目录 = 25 个任务 `.py` + `driver.py` + `analysis_config.py`（共 27 个），无 shell 脚本**。`run-headless.sh` 曾在目录里，现已删除；`analyzeHeadless` 只由 `driver.py` 的 `.java` 分支调用，不要直接用它跑 `.py`。`__pycache__` 不必提交。
+**脚本目录（迁移当时的构成）= 25 个任务 `.py` + `driver.py` + `analysis_config.py`（共 27 个），无 shell 脚本**——此后目录持续增长（现行 47 个 `.py`，三层结构见 SKILL.md §5）；`run-headless.sh` 曾在目录里，现已删除；`analyzeHeadless` 只由 `driver.py` 的 `.java` 分支调用，不要直接用它跑 `.py`。`__pycache__` 不必提交。
 
 ### PyGhidra 持久化限制：存不下自己加载的程序（已用 `export` 绕过）
 

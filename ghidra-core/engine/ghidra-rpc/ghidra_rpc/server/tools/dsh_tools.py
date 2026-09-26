@@ -279,7 +279,8 @@ def _handle_triage(ctx, args: dict) -> dict:
         go_re = re.compile(r"go\.buildid|runtime\.gopanic")
         rust_re = re.compile(r"panicked at|\.rustc")
         py_re = re.compile(r"PYINSTALLER|pyarmor|python3", re.IGNORECASE)
-        hints = {"go": False, "rust": False, "python": False}
+        pyx_re = re.compile(r"__pyx_|CyFunction", re.IGNORECASE)
+        hints = {"go": False, "rust": False, "python": False, "pyx": False}
 
         for data in listing.getDefinedData(True):
             scanned += 1
@@ -302,6 +303,8 @@ def _handle_triage(ctx, args: dict) -> dict:
                 hints["rust"] = True
             if not hints["python"] and py_re.search(value):
                 hints["python"] = True
+            if not hints["pyx"] and pyx_re.search(value):
+                hints["pyx"] = True
 
         result["quick_strings"] = {
             "total_strings_scanned": scanned,
@@ -408,9 +411,23 @@ def _handle_triage(ctx, args: dict) -> dict:
                 "imports 极少/入口在末节/高熵等任一疑点都要人工复核"),
         }
 
+        # CPython 扩展模块（Cython/手写 C 扩展）：exports 有 PyInit_*，
+        # 或 imports 引 CPython API，或字符串含 __pyx_/CyFunction。
+        # 命中 = 先走 ctf-patterns §12 元数据路线，别直接啃反编译 C。
+        python_ext = hints["pyx"]
+        if not python_ext:
+            python_ext = any(str(rec.get("name", "")).startswith("PyInit_")
+                             for rec in exports)
+        if not python_ext:
+            python_ext = any(
+                name.startswith("PyInit_") or name == "Py_Initialize"
+                or name.startswith("PyExc_")
+                for _, name in all_import_names)
+
         result["lang_hints"] = {
             "go": hints["go"], "rust": hints["rust"], "dotnet": dotnet,
-            "python": hints["python"], "upx": packer_verdict == "upx"
+            "python": hints["python"], "python_ext": python_ext,
+            "upx": packer_verdict == "upx"
         }
 
         # --- PE extras (best effort) ---
