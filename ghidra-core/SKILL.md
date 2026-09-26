@@ -208,7 +208,7 @@ export JAVA_HOME="C:/Java"
 | `frame_map.py` | 栈帧槽位归属表：`SUB RSP` 定帧 → 扫 `[RSP+off]` 首写/宽度/读写次数；同槽多宽度标可疑（伪码 `local_XXXX` 重叠命名的真身） |
 | `const_audit.py` | 伪码常量对照审计：`&DAT_0000xxxx` 小整数嫌疑（happyVm 实测抓到 `&DAT_00000007` = 长度 7）、`DAT_` 引用实际字节对照、指针化字面值漂移判定（注意：指向字符串中部的真实 `LEA` 立即数**不是**漂移，工具已加反汇编引用抑制） |
 | `model_diff.py` ◈ | **铁律 10② 分歧指纹产出**：模型实现 vs 真实 oracle 命令随机对拍 N 组（`--input-gen hex:N/dec/ascii:N`，确定性 `--seed`），首个分歧给 hex 对照 + 指纹分类（低半字全对/高低半字交换/单常量差/全体偏移固定值 ⇒ 疑似接口/搬运错；完全无关 ⇒ 疑似算法错）+ mismatch 率与指纹汇总；exit 0 全一致 / 2 有分歧 / 3 命令错误。纯本地子进程工具，不经 daemon |
-| `oracle_family.py` ◈ | **铁律 14 打桩 oracle 家族（单因子隔离）**：binary + `--stub 0xaddr=0xval`（可重复）批量产 patched 副本（x86-64 函数头写 `mov eax,imm32;ret`，`--rax` 用 imm64 形式）逐个运行出差分表：输出变 ⇒ 该因子参与计算；任意常量不变 ⇒ 无关通道。`--addr-is va`（默认，ELF 按 program header 换算；PE 暂只支持 offset）/offset；非 x86-64 exit 3；exit 0 全部跑完 / 2 有副本运行失败 / 3 用法/架构错误 |
+| `oracle_family.py` ◈ | **铁律 14 打桩 oracle 家族（单因子隔离）**：binary + `--stub 0xaddr=0xval`（可重复）批量产 patched 副本（x86-64 函数头写 `mov eax,imm32;ret`，`--rax` 用 imm64 形式）逐个运行出差分表：输出变 ⇒ 该因子参与计算；任意常量不变 ⇒ 无关通道。`--addr-is va`（默认，ELF 按 program header、PE 按节表+ImageBase 换算，可用 `--dry-run` 只验换算不 patch）/offset；非 x86-64 exit 3；exit 0 全部跑完 / 2 有副本运行失败 / 3 用法/架构错误 |
 
 ### 第 3 层：legacy（冻结备查，被 rpc 取代）
 

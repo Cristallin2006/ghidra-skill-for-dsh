@@ -8,16 +8,18 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 同一道 CTF 逆向题（UPX 壳 + 换表 base64 + RC4）：调校前 40 分钟做不出 → 调校后 **16 分钟解出**。提速来自机制而非模型：常驻 daemon + 三道脚本闸门（断路器/权威读数/求逆检查）+ 函数级 Oracle + 脱壳域，每次实战踩坑都固化成铁律与脚本。
 
+经多轮真题复盘与第三方对抗审计持续硬化（happyVm / DEFCON26 quals 等）：伪码 fatal 误判基线 6.0% → 2.8%（尾调用甄别）；跳转表/栈帧/常量三类"手读 asm"高危动作全部脚本化；台账从 observe/conclude 扩展为 **observe / conclude / anomaly / hypothesis / plan / stuck** 六种对象，假设与枚举预算不再只活在聊天里。
+
 ## 结构（1 底座 + 7 场景）
 
 | 目录 | 职责 |
 |---|---|
-| `ghidra-core` | 唯一放代码的底座：engine（ghidra-rpc + dsh 补丁）、`rpc_driver.py` 统一入口、`doctor.py` 环境自检、三道闸门 `ledger.py` / `read_views.py` / `crypto_sanity.py` |
-| `re-triage` | 未知二进制第一步：判型/语言/壳三信号交叉（节名 + magic + 结构），输出路线决策 |
+| `ghidra-core` | 唯一放代码的底座：engine（ghidra-rpc + dsh 补丁）、`rpc_driver.py` 统一入口、`doctor.py` 环境自检、三道闸门 `ledger.py` / `read_views.py` / `crypto_sanity.py`、分析脚本层（`decomp_lint` 伪码体检 / `jt_resolve` 跳转表 / `frame_map` 栈帧 / `const_audit` 常量对照 / `emulate_program` 整程序仿真 / `model_diff` 模型对拍 / `oracle_family` 打桩因子隔离等，全部自包含可独立调用） |
+| `re-triage` | 未知二进制第一步：判型/语言/壳三信号交叉（节名 + magic + 结构），输出路线决策；foreign-arch ELF 路由（Ghidra processor 反编译优先，objdump 只核对单点） |
 | `re-unpack` | 脱壳 + 强制验证：UPX/ASPack/Themida/VMProtect/多层壳，PyInstaller 一条龙（pycdc 覆盖 Python ≥3.9） |
-| `ghidra-static` | 静态深挖：反编译/xref/标注/patch/交付；Go/Rust stripped 指纹、CTF 模式库 |
+| `ghidra-static` | 静态深挖：反编译/xref/标注/patch/交付；Go/Rust stripped 指纹、CTF 模式库（含 fp16 自检向量） |
 | `vuln-audit` | 漏洞模式 checklist：内存破坏/格式化串/整数溢出/命令注入等 8 类，可达性优先 |
-| `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
+| `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、打桩 oracle 家族（单因子隔离）、模型差分校验、跨架构 qemu-user/gdb-multiarch、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
 | `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
 | `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
 
@@ -54,7 +56,8 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 ## 设计要点
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；长任务（load / version-track）走后台 + `@out` 落盘
-- **机械闸门，不靠自觉**：`ledger.py`（同区回访强制 `--delta`、结论写入即锁定）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
+- **机械闸门，不靠自觉**：14 条铁律的执行载体是脚本——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、`resolve` 缺证据 exit 2 的反向门、hypothesis/plan 落账、churn 覆盖度信号）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
+- **判定性实验优先**：参数角色/因子参与度不靠调用约定猜——`oracle_family.py` 打桩隔离单因子、`model_diff.py` 模型对拍输出分歧指纹（低半字全对 ⇒ 接口错不是算法错）
 - **验证独立性**：结论强制独立来源，无则标 ⚠UNVERIFIED——Google P0 Naptime 的 Perfect Verification 原则
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做（ghidra-core/SKILL.md §8）
 

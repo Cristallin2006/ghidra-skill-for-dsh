@@ -61,6 +61,10 @@
 | one_gadget 1.10.0 | `/usr/local/bin/one_gadget` | libc 一把梭 gadget | ghidra-static pwn |
 | seccomp-tools 1.7.1 | `/usr/local/bin/seccomp-tools` | seccomp 规则 dump/分析 | ghidra-static 沙箱题 |
 | qemu-system-x86 8.2.2 | `/usr/bin/qemu-system-x86_64` | 整机仿真 | re-triage 固件/异架构 |
+| qemu-user | `/usr/bin/qemu-riscv64` / `qemu-aarch64` | foreign-arch ELF 直接运行（user 模式） | re-dynamic 跨架构分支；DEFCON26 riscv64 复盘缺口 |
+| gdb-multiarch | `/usr/bin/gdb-multiarch` | 跨架构调试（配 `qemu-<arch> -g 1234` + `target remote`） | 同上 |
+| wabt 1.0.34 | `/usr/bin/wasm2wat` / `wasm-objdump` / `wasm-decompile` | WASM 反汇编/反编译 | re-triage WASM 路由（此前文档指向死路，已补装） |
+| wasmtime 49.0.1 | `/usr/local/bin/wasmtime`（→ `/root/.wasmtime/bin/wasmtime`） | WASM 独立运行时 CLI（跑一下看看） | 官方 install.sh + symlink；非交互 shell 可用 |
 | upx-ucl 4.2.2 | `/usr/bin/upx` | Linux 侧 UPX（ELF 壳） | re-unpack ELF 样本 |
 | ruby-full 3.x | apt | one_gadget/seccomp-tools 的运行时 | 依赖 |
 | file 5.45 | `/usr/bin/file` | 判型 | re-triage（WSL 侧备选；Git Bash 也有） |

@@ -19,11 +19,13 @@ patch 方式（x86-64，函数开头覆写）:
 其它架构（含 ELF e_machine != 0x3e、PE machine != 0x8664）未支持，exit 3。
 
 地址换算（--addr-is，默认 va）:
-  va:     ELF 按 program header（PT_LOAD）把虚拟地址换算成文件偏移；
-          PE 暂只支持 offset（VA->文件偏移需按节表换算，未实现），给 va 会 exit 3。
+  va:     ELF 按 program header（PT_LOAD）换算；PE 按节表换算
+          （ImageBase 参与：VA = ImageBase + RVA，小于 ImageBase 的输入按 RVA
+          直接接受；落点在节的虚拟扩展区/跨节边界/不在任何节内 -> exit 3）。
   offset: 直接当文件偏移用。
 Ghidra listing 里的地址对 PIE ELF 是 vaddr（通常 0x100000+ 基址），用 va；
-对 objdump/nm 看到的非 PIE 地址同样是 vaddr，用 va。
+对 objdump/nm 看到的非 PIE 地址同样是 vaddr，用 va。PE 的 Ghidra 地址是
+ImageBase+RVA 的绝对 VA，同样用 va。`--dry-run` 只打印换算结果不 patch。
 
 exit: 0 全部副本成功运行并完成差分; 2 有副本运行失败（超时/非零退出，
       差分表仍给出，失败行单列）; 3 用法/文件/架构/地址换算错误。
@@ -111,6 +113,51 @@ def elf_va_to_offset(data: bytes, va: int) -> int:
         "文件偏移请用 --addr-is offset）")
 
 
+def pe_headers(data: bytes) -> tuple[int, int, list[dict]]:
+    """-> (image_base, section_table_off, sections)。节字段：name/va/vsize/raw_size/raw_off。"""
+    pe_off = struct.unpack_from("<I", data, 0x3C)[0]
+    num_sections = struct.unpack_from("<H", data, pe_off + 6)[0]
+    opt_size = struct.unpack_from("<H", data, pe_off + 20)[0]
+    opt_off = pe_off + 24
+    magic = struct.unpack_from("<H", data, opt_off)[0]
+    if magic == 0x20B:      # PE32+：ImageBase 在 opt+24（8 字节）
+        image_base = struct.unpack_from("<Q", data, opt_off + 24)[0]
+    elif magic == 0x10B:    # PE32：ImageBase 在 opt+28（4 字节；opt+24 是 BaseOfData）
+        image_base = struct.unpack_from("<I", data, opt_off + 28)[0]
+    else:
+        die(f"未知 optional header magic 0x{magic:x}（非 PE32/PE32+）")
+    sec_off = opt_off + opt_size
+    sections = []
+    for i in range(num_sections):
+        off = sec_off + i * 40
+        if off + 40 > len(data):
+            die("节表越出文件末尾，文件损坏")
+        name = data[off:off + 8].split(b"\x00")[0].decode("ascii", "replace")
+        vsize, va, raw_size, raw_off = struct.unpack_from("<IIII", data, off + 8)
+        sections.append({"name": name, "va": va, "vsize": vsize,
+                         "raw_size": raw_size, "raw_off": raw_off})
+    return image_base, sec_off, sections
+
+
+def pe_va_to_offset(data: bytes, va: int, patch_len: int) -> int:
+    image_base, _sec_off, sections = pe_headers(data)
+    # 用户给的通常是 Ghidra listing 的绝对 VA（ImageBase+RVA）；小于 ImageBase
+    # 的按 RVA 直接接受（Ghidra 对部分 PE 用 0x10000 基址截断显示时有用）。
+    rva = va - image_base if va >= image_base else va
+    for s in sections:
+        span = max(s["vsize"], s["raw_size"])
+        if s["va"] <= rva < s["va"] + span:
+            delta = rva - s["va"]
+            if delta + patch_len > s["raw_size"]:
+                die(f"va 0x{va:x} 落在节 {s['name']} 的虚拟扩展区"
+                    f"（RVA 0x{rva:x}，该节 raw 只有 0x{s['raw_size']:x} 字节）"
+                    "或打桩跨越节边界——文件里没有对应字节可改")
+            return s["raw_off"] + delta
+    die(f"va 0x{va:x}（RVA 0x{rva:x}，ImageBase 0x{image_base:x}）不在任何节内"
+        f"（节: {', '.join(s['name'] or '?' for s in sections)}）；"
+        "文件偏移请用 --addr-is offset")
+
+
 def make_stub(val: int, wide: bool) -> bytes:
     if wide:
         return b"\x48\xB8" + struct.pack("<Q", val & 0xFFFFFFFFFFFFFFFF) + b"\xC3"
@@ -142,9 +189,12 @@ def main() -> int:
     ap.add_argument("--stub", action="append", required=True, metavar="ADDR=VAL",
                     help="打桩点=返回常量（hex），可重复；同地址多个值即一个家族")
     ap.add_argument("--addr-is", choices=["va", "offset"], default="va",
-                    help="stub 地址是虚拟地址还是文件偏移（默认 va；PE 暂只支持 offset）")
+                    help="stub 地址是虚拟地址还是文件偏移（默认 va：ELF 按 program "
+                         "header、PE 按节表+ImageBase 换算；小于 ImageBase 的值按 RVA 接受）")
     ap.add_argument("--rax", action="store_true",
                     help="用 mov rax, imm64; ret（10 字节）代替 mov eax, imm32; ret")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="只做地址换算并打印结果，不 patch 不运行（验证换算用）")
     ap.add_argument("--run-args", default="",
                     help="传给程序的参数（一个字符串，内部 shlex 拆分）")
     ap.add_argument("--stdin-file", help="喂给 stdin 的文件")
@@ -159,8 +209,6 @@ def main() -> int:
         die(f"binary not found: {binary}")
     data = open(binary, "rb").read()
     fmt = detect_format(data)
-    if fmt == "pe" and args.addr_is == "va":
-        die("PE 暂只支持 --addr-is offset（VA->文件偏移需按节表换算，未实现）")
 
     stdin_data = None
     if args.stdin_file:
@@ -172,11 +220,32 @@ def main() -> int:
     stubs = [parse_stub(s) for s in args.stub]
     jobs = []
     for addr, val in stubs:
-        offset = addr if args.addr_is == "offset" else elf_va_to_offset(data, addr)
         patch = make_stub(val, args.rax)
+        if args.addr_is == "offset":
+            offset = addr
+        elif fmt == "pe":
+            offset = pe_va_to_offset(data, addr, len(patch))
+        else:
+            offset = elf_va_to_offset(data, addr)
         if offset + len(patch) > len(data):
             die(f"打桩偏移 0x{offset:x} 越出文件末尾")
         jobs.append({"addr": addr, "val": val, "offset": offset, "patch": patch})
+
+    if args.dry_run:
+        out = {"ok": True, "binary": binary, "format": fmt,
+               "addr_is": args.addr_is, "dry_run": True,
+               "conversions": [{"addr": j["addr"], "val": j["val"],
+                                "offset": j["offset"],
+                                "patch_hex": j["patch"].hex()} for j in jobs]}
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            print(f"[oracle_family --dry-run] {os.path.basename(binary)} "
+                  f"({fmt}, addr-is {args.addr_is})")
+            for j in jobs:
+                print(f"  addr 0x{j['addr']:x} -> 文件偏移 0x{j['offset']:x} "
+                      f"（打桩 {j['patch'].hex(' ')}）")
+        return 0
 
     base = os.path.basename(binary)
     stem, suffix = os.path.splitext(base)
