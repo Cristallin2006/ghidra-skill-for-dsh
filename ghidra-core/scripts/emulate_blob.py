@@ -123,7 +123,7 @@ def main():
     entry = a.base + a.entry
 
     state = {
-        "insns": 0, "stop": None, "dirty": set(),
+        "insns": 0, "stop": None, "dirty": set(), "entry_unmapped": False,
         "regions": [], "t0": time.monotonic(),
     }
 
@@ -186,7 +186,13 @@ def main():
         state["dirty"].add(align_down(address + size - 1))  # 跨页写入的尾页
 
     def hook_fetch_unmapped(uc_, access, address, size, value, _):
-        if in_mapped(uc_.reg_read(reg_pc)):
+        if state["insns"] == 0:
+            # 第一条取指就失败 = 入口本身未映射，是 harness 配置错，不是 RET 飞出
+            state["stop"] = ("entry-unmapped (入口 0x%x 未映射：0 条指令都未能取指，"
+                             "这是 harness 配置错——检查 --base/--entry，"
+                             "--entry 是相对 --base 的偏移)" % address)
+            state["entry_unmapped"] = True
+        elif in_mapped(uc_.reg_read(reg_pc)):
             state["stop"] = "invalid-fetch (0x%x 未映射)" % address
         else:
             state["stop"] = ("ret-flyout (%s=0x%x 已飞出映射区，疑似 RET 飞出)"
@@ -265,6 +271,9 @@ def main():
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
         print("  JSON -> %s" % a.json)
+    if state["entry_unmapped"]:
+        print("  [harness 配置错] 入口未映射，本次仿真无效——修正 --base/--entry 后重跑")
+        return 3
     return 0
 
 

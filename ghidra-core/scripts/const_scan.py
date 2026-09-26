@@ -29,6 +29,7 @@ Usage:
   python const_scan.py <decompiled.c | decompile-all @out JSON> [--json out.json]
   python const_scan.py chal.p3pf.clean.c --min-cluster 8
   python const_scan.py decompile_all_out.json --json report.json
+  python const_scan.py chal.p3pf.clean.c --binary chal.so   # 还原 <DAT_…> 缓存整数的值
 
 Input is auto-detected: JSON containing result.functions[].c_code (or a
 single result.c_code, or a top-level functions list) is treated as
@@ -36,14 +37,27 @@ decompile-all / decompile-function output; anything else is treated as plain
 C text (decompile_all .c sidecar `/* ===== name @ addr ===== */` markers are
 used to attribute functions when present).
 
-Exit codes: 0 scan completed, 1 usage error (missing file / malformed input).
+--binary 值还原（T3 完整版）：列表项里的 <DAT_xxxxxxxx> 是 Cython 缓存
+PyLong 对象的指针槽。给出样本路径（须先 rpc_driver.py ensure）后，脚本
+经 daemon 读 DAT 槽里的指针，再按 PyLongObject 布局读 ob_digit 还原整数，
+预览/字面量直接打印 Python 值。CPython 版本布局自动判别（3.12 lv_tag vs
+pre-3.12 ob_size，按全体解析结果投票），可用 --py 强制。默认按 64 位指针
+解析（--ptr-size 4 可改）。
+
+Exit codes: 0 scan completed（含 --binary 模式下部分/全部引用还原失败——
+会附提示），1 usage error (missing file / malformed input)。
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import struct
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
     if _stream.encoding and _stream.encoding.lower() not in ("utf-8", "utf8"):
@@ -69,8 +83,183 @@ ALIAS_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;")
 
 FUNC_MARKER_RE = re.compile(r"/\*\s*=+\s*(.+?)\s*@\s*([0-9a-fA-Fx]+)\s*=+\s*\*/")
 
+DAT_REF_RE = re.compile(r"^DAT_([0-9a-fA-F]{6,16})$")
+
 PREVIEW_ITEMS = 16
 CLUSTER_MAX_GAP = 8
+
+RPC_DRIVER = Path(__file__).resolve().parent / "rpc_driver.py"
+
+
+class RpcError(Exception):
+    def __init__(self, message, daemon=False):
+        super().__init__(message)
+        self.daemon = daemon
+
+
+def rpc_call(binary, command, *args, timeout=120):
+    """subprocess 调同目录 rpc_driver.py；@out 落临时文件再读 JSON
+    （铁律 3：大输出必须落文件，不走 stdout 管道）。"""
+    fd, out = tempfile.mkstemp(prefix="dsh_cs_", suffix=".json")
+    os.close(fd)
+    cmd = [sys.executable, str(RPC_DRIVER), "@" + out, command, str(binary)]
+    cmd += [str(a) for a in args]
+    proc = None
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        raw = Path(out).read_text(encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        raise RpcError("rpc_driver 调用超时（%ds），daemon 可能未就绪" % timeout, True)
+    except OSError as e:
+        raise RpcError("rpc_driver 调用失败: %s" % e, True)
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+    if not raw.strip():
+        tail = (((proc.stderr or "") + (proc.stdout or "")).strip()[:400]
+                if proc else "")
+        raise RpcError("rpc_driver 无 JSON 输出。%s" % tail, True)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise RpcError("rpc_driver 输出不是 JSON: %s" % raw[:300], True)
+    if not data.get("ok"):
+        raise RpcError("%s 失败: %s" % (command, data.get("message")
+                                        or data.get("error")))
+    return data.get("result") or {}
+
+
+def read_bytes(binary, addr, length):
+    """经 daemon 读内存；读不出返回 None。"""
+    try:
+        res = rpc_call(binary, "read-bytes", "0x%x" % addr, str(length))
+        return bytes.fromhex(res.get("hex") or "")
+    except RpcError:
+        return None
+
+
+def _parse_pylong(digits):
+    """30 bit limb 组装；任一 limb 超界返回 None。"""
+    if any(d >= (1 << 30) for d in digits):
+        return None
+    return sum(d << (30 * i) for i, d in enumerate(digits))
+
+
+def resolve_cached_int(binary, dat_addr, ptr_size, layout):
+    """把 DAT 槽（缓存 PyLong* 的指针）还原成 Python int；失败返回 None。
+
+    layout: "312" = CPython 3.12+ lv_tag（低 2 bit 符号、高位 digit 数）；
+            "311" = pre-3.12 ob_size（有符号 ssize_t，绝对值 = digit 数）。
+    """
+    pb = read_bytes(binary, dat_addr, ptr_size)
+    if pb is None or len(pb) < ptr_size:
+        return None
+    p = int.from_bytes(pb, "little")
+    if p == 0:
+        return None
+    size_off = 2 * ptr_size
+    size_len = ptr_size
+    hdr = read_bytes(binary, p, size_off + size_len)
+    if hdr is None or len(hdr) < size_off + size_len:
+        return None
+    q = int.from_bytes(hdr[size_off:size_off + size_len], "little", signed=True)
+    if layout == "312":
+        tag = q & 3
+        if tag == 3:  # 非法符号码
+            return None
+        if tag == 1:
+            return 0
+        neg = tag == 2
+        nd = q >> 3
+    else:
+        if abs(q) > 4096:  # ob_size 不可能这么大——更像 3.12 lv_tag
+            return None
+        neg = q < 0
+        nd = abs(q)
+    if nd == 0:
+        return 0
+    if nd > 64:
+        return None
+    raw = read_bytes(binary, p + size_off + size_len, 4 * nd)
+    if raw is None or len(raw) < 4 * nd:
+        return None
+    digits = struct.unpack("<%dI" % nd, raw)
+    value = _parse_pylong(digits)
+    if value is None:
+        return None
+    return -value if neg else value
+
+
+def resolve_refs(binary, literals, ptr_size, py_layout):
+    """还原全部字面量里的 <DAT_…> 引用。返回 (stats, layout_used)。
+
+    版本自动判别：两种布局全体试解析，"可还原数多、非零居多"的布局胜出
+    （3.12 布局误读 pre-3.12 ob_size 会把大量对象判成 0，反之误读会
+    limb 超界解析失败；常量表通常非零居多）。py_layout 为 "311"/"312"
+    时跳过投票。
+    """
+    refs = sorted({it["name"] for lit in literals for it in lit["items"]
+                   if it["kind"] == "ref" and DAT_REF_RE.match(it["name"])})
+    stats = {"refs": len(refs), "resolved": 0, "layout": py_layout,
+             "unresolved": []}
+    if not refs:
+        return stats, py_layout
+    addrs = {name: int(DAT_REF_RE.match(name).group(1), 16) for name in refs}
+
+    if py_layout == "auto":
+        votes = {}
+        for layout in ("312", "311"):
+            ok = nz = 0
+            for addr in addrs.values():
+                v = resolve_cached_int(binary, addr, ptr_size, layout)
+                if v is not None:
+                    ok += 1
+                    if v != 0:
+                        nz += 1
+            votes[layout] = (ok, nz)
+        # 先比可解析数，再比非零数；并列时偏向 3.12（现代 Cython 目标）
+        layout_used = max(("312", "311"),
+                          key=lambda l: (votes[l][0], votes[l][1], l == "312"))
+        stats["layout"] = layout_used
+        stats["votes"] = {l: {"ok": ok, "nonzero": nz}
+                          for l, (ok, nz) in votes.items()}
+    else:
+        layout_used = py_layout
+
+    resolved = {}
+    overrides = 0
+    other = "311" if layout_used == "312" else "312"
+    for name, addr in addrs.items():
+        v = resolve_cached_int(binary, addr, ptr_size, layout_used)
+        if v == 0:
+            alt = resolve_cached_int(binary, addr, ptr_size, other)
+            if alt:  # 备选布局给出非零值：投票误判修正（混合/边界样本）
+                v = alt
+                overrides += 1
+        if v is not None:
+            resolved[name] = v
+    stats["alt_overrides"] = overrides
+    for lit in literals:
+        for it in lit["items"]:
+            if it["kind"] == "ref" and it["name"] in resolved:
+                it["kind"] = "int"
+                it["value"] = resolved[it["name"]]
+                it["resolved_from"] = it["name"]
+        if lit["items"]:
+            lit["preview"] = render_literal(lit["items"], lit["kind"],
+                                            PREVIEW_ITEMS)
+            lit["literal"] = render_literal(lit["items"], lit["kind"], None)
+        still = sum(1 for it in lit["items"] if it["kind"] == "ref")
+        if still == 0 and lit["items"]:
+            lit["note"] = None
+        elif still:
+            lit["note"] = (f"{still}/{len(lit['items'])} 项仍是未解析引用"
+                           "（读不到内存或不是 PyLong——可能是 str/bytes 缓存对象）")
+    stats["resolved"] = len(resolved)
+    stats["unresolved"] = [n for n in refs if n not in resolved]
+    return stats, layout_used
 
 
 def parse_int(token: str) -> int:
@@ -262,7 +451,8 @@ def scan_function(fn: dict, min_cluster: int):
         note = None
         if items and n_ref == len(items):
             note = ("全部列表项来自缓存全局对象（Cython int 对象池 / mstate）——"
-                    "对 ref 名做 xref 或在模块 init 函数里找对应 PyLong_FromLong 初始化")
+                    "值未解析：加 --binary <样本> 自动还原（须先 rpc_driver.py ensure），"
+                    "或手工对 ref 名做 xref / 在模块 init 函数里找 PyLong_FromLong 初始化")
         elif n_ref:
             note = f"{n_ref}/{len(items)} 项是全局对象引用，需到对象池解析"
         literals.append({
@@ -322,6 +512,15 @@ def main() -> int:
     ap.add_argument("--json", dest="json_out", default=None, help="把完整报告写入 JSON 文件")
     ap.add_argument("--min-cluster", type=int, default=8,
                     help="告警模式：同一聚集内 0..255 小整数 PyLong_FromLong 的最少个数（默认 8）")
+    ap.add_argument("--binary", default=None,
+                    help="样本路径（须先 rpc_driver.py ensure）：给出后经 daemon "
+                         "把 <DAT_…> 缓存 PyLong 引用还原成 Python 整数值")
+    ap.add_argument("--py", dest="py_layout", choices=("auto", "311", "312"),
+                    default="auto",
+                    help="CPython 布局：312=lv_tag（3.12+）/ 311=ob_size（≤3.11）/"
+                         "auto=全体投票自动判别（默认）")
+    ap.add_argument("--ptr-size", type=int, choices=(4, 8), default=8,
+                    help="指针字节数（默认 8，64 位样本）")
     args = ap.parse_args()
 
     try:
@@ -337,13 +536,27 @@ def main() -> int:
         all_leads.extend(leads)
         all_alerts.extend(alerts)
 
+    resolve_stats = None
+    if args.binary:
+        resolve_stats, _ = resolve_refs(args.binary, all_literals,
+                                        args.ptr_size, args.py_layout)
     report = {
         "input": args.input, "input_kind": input_kind,
         "functions_scanned": len(funcs),
         "literals": all_literals, "leads": all_leads, "alerts": all_alerts,
     }
+    if resolve_stats is not None:
+        report["resolve"] = resolve_stats
 
     print(f"[const_scan] 输入: {args.input}（{input_kind}），扫描函数 {len(funcs)} 个")
+    if resolve_stats is not None and resolve_stats["refs"]:
+        print(f"[const_scan] 缓存对象引用 {resolve_stats['refs']} 个，"
+              f"已还原 {resolve_stats['resolved']} 个"
+              f"（CPython 布局: {resolve_stats['layout']}）")
+        if resolve_stats["resolved"] == 0:
+            print("[提示] 0 个还原成功——先确认 daemon 已拉起"
+                  "（rpc_driver.py ensure <binary>）且 --binary 路径与"
+                  " ensure 的是同一样本；若布局判别异常可用 --py 311/312 强制。")
     print()
 
     if all_literals:

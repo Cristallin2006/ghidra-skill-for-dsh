@@ -12,13 +12,20 @@ Host-side tool (any Python 3.8+, stdlib only; 纯本地子进程工具，不经 
 模式指纹 + 判词。
 
 分歧指纹（判据出处 ghidra-core 铁律 10②：差异呈规律 = 接口/搬运写错，
-不是"程序少了运算"）:
-  长度不一致      输出长度不同            -> 疑似接口错（framing/编码/换行/padding）
-  低半字全对      每字节低 4 bit 全部相等  -> 疑似接口错（半字/位宽搬运错）
-  高低半字交换    model == 逐字节半字交换(oracle) -> 疑似接口错（hex 解码/字节序错）
-  单常量差        恰好 1 个字节不同        -> 疑似接口错（单字段/边界处理错）
-  全体偏移固定值  所有字节的差值恒定        -> 疑似接口错（基址/起点/常量加错）
-  完全无关        无上述规律              -> 疑似算法错（模型本身错）
+不是"程序少了运算"；判词优先级：宽度级规律 > 字节级搬运 > 无规律——
+命中宽度级规律时绝不落"疑似算法错"）:
+  长度不一致        输出长度不同            -> 疑似接口错（framing/编码/换行/padding）
+  ── 宽度级（按 2/4 字节块统计）──
+  高低半块交换      model == 块内高低半互换   -> 疑似接口错（16/32 位半字拼装写反）
+  低半块全对+高半块恒定差  低半块逐字节相等，高半块 XOR/加法差恒定
+                                          -> 疑似接口错（移位/掩码/字段位宽，铁律 10② 点名形状）
+  单侧半块恒为常量  每块某半块恒为同一常量    -> 疑似接口错（常量写死/掩码错）
+  ── 字节级（nibble 粒度）──
+  低半字节全对      每字节低 4 bit 全部相等  -> 疑似接口错（nibble/位宽搬运错）
+  高低半字节交换    model == 逐字节 nibble 交换 -> 疑似接口错（hex 解码/位拼接写反）
+  单常量差          恰好 1 个字节不同        -> 疑似接口错（单字段/边界处理错）
+  全体偏移固定值    所有字节的差值恒定        -> 疑似接口错（基址/起点/常量加错）
+  完全无关          无上述规律              -> 疑似算法错（模型本身错）
 
 统计: mismatch 率 + 全部分歧的指纹汇总（--json 输出机器可读结构）。
 exit: 0 全部一致; 2 有分歧; 3 命令错误（子进程非零退出/超时/启动失败/用法错）。
@@ -85,24 +92,79 @@ def _swap_nib(b: int) -> int:
     return ((b & 0x0F) << 4) | (b >> 4)
 
 
+def _word_fp(mo: bytes, om: bytes, size: int) -> tuple[str, str] | None:
+    """按 size 字节块检查宽度级指纹（16/32 位半字级规律）；命中返回
+    (指纹名, 细节)，否则 None。判词一律 VERDICT_INTERFACE——宽度级规律
+    出现时禁止落"疑似算法错"（铁律 10②）。"""
+    n = len(mo)
+    if size < 2 or n % size != 0:
+        return None
+    h = size // 2
+    words_m = [mo[i:i + size] for i in range(0, n, size)]
+    words_o = [om[i:i + size] for i in range(0, n, size)]
+    pairs = list(zip(words_m, words_o))
+    # ① 整块高低半互换（真·半字交换，如 4 字节块 d[2:4]+d[0:2]）
+    if all(mw == ow[h:] + ow[:h] for mw, ow in pairs):
+        return (f"高低半块交换（按 {size} 字节块）",
+                f"model 输出 = oracle 输出按 {size} 字节块高低 {h} 字节互换，"
+                f"典型的 {size * 4} 位半字拼装写反（移位方向/字段顺序错）")
+    # ② 低半块全对 + 高半块差异恒定（chal 形状：铁律 10② 点名指纹）
+    if all(mw[:h] == ow[:h] for mw, ow in pairs):
+        per_pos_xor = [{(mw[h + p] ^ ow[h + p]) for mw, ow in pairs}
+                       for p in range(h)]
+        per_pos_add = [{(mw[h + p] - ow[h + p]) % 256 for mw, ow in pairs}
+                       for p in range(h)]
+        if all(len(s) == 1 for s in per_pos_xor):
+            ds = [s.pop() for s in per_pos_xor]
+            if any(ds):
+                return (f"低半块全对+高半块 XOR 恒定（按 {size} 字节块）",
+                        f"低 {h} 字节全部一致，高 {h} 字节逐位 XOR 差恒定为 "
+                        f"{' '.join('0x%02x' % d for d in ds)}——接口/搬运写错的"
+                        "典型指纹（铁律 10② 点名形状），查移位/掩码/字段位宽，"
+                        "第一嫌疑人是 harness/连线")
+        if all(len(s) == 1 for s in per_pos_add):
+            ds = [s.pop() for s in per_pos_add]
+            if any(ds):
+                return (f"低半块全对+高半块加法恒定（按 {size} 字节块）",
+                        f"低 {h} 字节全部一致，高 {h} 字节逐字节差恒定为 "
+                        f"{' '.join('+0x%02x' % d for d in ds)}（mod 256）——"
+                        "接口/搬运写错的典型指纹（铁律 10②），查常量/基址/位宽")
+    # ③ 单侧半块恒为常量（需 ≥2 个块，单块时"恒为常量"无意义）
+    if len(pairs) >= 2:
+        for side, sl in (("低", slice(0, h)), ("高", slice(h, size))):
+            vals = {mw[sl] for mw in words_m}
+            if len(vals) == 1 and any(mw[sl] != ow[sl] for mw, ow in pairs):
+                c = vals.pop()
+                return (f"{side}半块恒为常量（按 {size} 字节块）",
+                        f"model 每 {size} 字节块的{side} {h} 字节恒为 "
+                        f"{c.hex(' ')}，疑似常量写死/掩码错——接口/搬运问题")
+    return None
+
+
 def fingerprint(model_out: bytes, oracle_out: bytes) -> tuple[str, str, str]:
-    """-> (指纹名, 细节, 判词)"""
+    """-> (指纹名, 细节, 判词)。判词优先级：宽度级规律 > 字节级搬运 > 无规律。"""
     if len(model_out) != len(oracle_out):
         return ("长度不一致",
                 f"model={len(model_out)}B vs oracle={len(oracle_out)}B",
                 VERDICT_LENGTH)
     n = len(model_out)
     diffs = [i for i in range(n) if model_out[i] != oracle_out[i]]
+    # 宽度级（16/32 位块）优先：命中即接口判词，绝不落"疑似算法错"
+    for size in (4, 2):
+        hit = _word_fp(model_out, oracle_out, size)
+        if hit is not None:
+            return (hit[0], hit[1], VERDICT_INTERFACE)
+    # 字节级（nibble 粒度）
     if all((model_out[i] & 0x0F) == (oracle_out[i] & 0x0F) for i in range(n)):
         bad = next(i for i in range(n) if model_out[i] != oracle_out[i])
-        return ("低半字全对",
-                f"{len(diffs)}/{n} 字节高半字不同，低半字全部一致"
+        return ("低半字节全对（低 nibble）",
+                f"{len(diffs)}/{n} 字节高 nibble 不同，低 nibble 全部一致"
                 f"（首个 offset {bad}: model=0x{model_out[bad]:02x} "
                 f"oracle=0x{oracle_out[bad]:02x}）",
                 VERDICT_INTERFACE)
     if all(model_out[i] == _swap_nib(oracle_out[i]) for i in range(n)):
-        return ("高低半字交换",
-                f"model 输出 = oracle 输出逐字节半字交换（{len(diffs)}/{n} 字节），"
+        return ("高低半字节交换（nibble swap）",
+                f"model 输出 = oracle 输出逐字节 nibble 交换（{len(diffs)}/{n} 字节），"
                 "典型的 hex 解码/位拼接写反",
                 VERDICT_INTERFACE)
     if len(diffs) == 1:

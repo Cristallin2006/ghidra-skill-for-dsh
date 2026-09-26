@@ -276,6 +276,10 @@ def main() -> int:
                 rc = 2
 
         # 按地址聚合成判词
+        # 基线未观测到输出 = "观测不到"，不得当成"不变量"下因果判词（铁律 10②
+        # 的镜像：判"不参与"是否定性结论，需要基线确实可观测）
+        baseline_observed = (baseline["status"] == "ok"
+                             and len(baseline["stdout"]) > 0)
         verdicts = []
         by_addr: dict[int, list] = {}
         for r in runs:
@@ -285,6 +289,9 @@ def main() -> int:
             any_changed = any(r["changed"] for r in ok_runs)
             if any_changed:
                 verdict = "该因子参与计算（打桩返回值改变了输出）"
+            elif not baseline_observed:
+                verdict = ("harness 未观测到基线输出（status/exit/stdout 见上）"
+                           "——先确认入口/投喂让程序产生输出，本次不下因果判词")
             elif len(ok_runs) >= 2:
                 verdict = ("任意常量下输出均不变 ⇒ 该因子不参与，"
                            "疑为无关通道（可停止在它上面读码）")
@@ -308,7 +315,9 @@ def main() -> int:
             print(f"[oracle_family] {base} ({fmt}, addr-is {args.addr_is})")
             bl = result["baseline"]
             print(f"基线（未 patch）: status={bl['status']} "
-                  f"exit={bl['exit_code']} stdout={bl['stdout_hex']!r}")
+                  f"exit={bl['exit_code']} stdout(hex)={bl['stdout_hex']!r}")
+            if not baseline_observed:
+                print("⚠ 基线未观测到输出——判词已抑制；先确认入口/投喂")
             print("| 打桩点 | 值 | 文件偏移 | 运行 | exit | 输出变? |")
             print("|--------|----|----------|------|------|---------|")
             for r in runs:

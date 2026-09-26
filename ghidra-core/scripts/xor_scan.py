@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""xor_scan.py - mechanical transform search over a blob (Iron Rule: fix the
+r"""xor_scan.py - mechanical transform search over a blob (Iron Rule: fix the
 ad-hoc XOR hunt into a tool).
 
 Host-side tool (any Python 3.8+, stdlib only). Pure local byte crunching - no

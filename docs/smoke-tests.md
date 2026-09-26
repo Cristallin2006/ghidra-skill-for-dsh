@@ -33,8 +33,8 @@
 | `const_audit.py` | 含小整数渲染的函数（happyVm: `0x40b2e0`） | 抓到 `&DAT_00000007`（= 长度 7）类嫌疑；真实 `LEA` 立即数（如字符串中部指针）**不**报漂移 |
 | `call_histogram.py` | 反汇编 listing 文件（happyVm: main_asm.lst） | 头号命中 `0x40aba0` × 22（≥3 次高亮） |
 | `decomp_lint.py` | decompile-all @out JSON + `--binary`（happyVm: happyvm.all.c） | fatal **13/468 = 2.8%**（尾调用已剔除，单列 15 个）；有 fatal exit 2。不给 `--binary` 时旧口径 28/468（尾调用混入 fatal） |
-| `const_scan.py` | Cython/C 反编译 C 或 decompile-all @out JSON | 重建 `PyList_New/PyTuple_New` 字面量；小整数聚集告警（chal 复盘 L 表 48 项） |
+| `const_scan.py` | Cython/C 反编译 C 或 decompile-all @out JSON | 定位 `PyList_New(n)` 形状（chal 复盘 L 表 = n=48）+ 小整数聚集告警；加 `--binary`（须先 ensure）把 `<DAT_…>` 缓存 PyLong 还原成 Python 值（CPython 布局自动投票，`--py` 可强制） |
 | `xor_scan.py` | 含单字节 XOR 层的 blob | Top N 命中正确密钥；`--dump` 产物可打印/magic 正确 |
-| `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；unicorn 缺失时 exit 3 且提示进 re-tools-venv |
-| `model_diff.py` | 玩具对：oracle=正确实现 stdin→stdout 恒等，model=半字交换/低半字置常量 | 半字交换指纹判「高低半字交换」、低半字判「低半字全对」，判词均为疑似接口错且 exit 2；恒等对 exit 0；不存在命令 exit 3 |
+| `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；入口未映射判「entry-unmapped（harness 配置错）」exit 3；unicorn 缺失时 exit 3 且提示进 re-tools-venv |
+| `model_diff.py` | 玩具对：oracle=正确实现 stdin→stdout 恒等，model=真 16 位半字交换（`d[2:4]+d[0:2]`）/ chal 形状（低 16 位原样、高 16 位 ^0x1234）/ 逐字节 nibble 交换 | 16 位交换判「高低半块交换（按 4 字节块）」、chal 形状判「低半块全对+高半块 XOR 恒定」、nibble 交换判「高低半字节交换」，判词均为疑似接口错且 exit 2（宽度级规律永不落"疑似算法错"）；恒等对 exit 0；不存在命令 exit 3 |
 | `oracle_family.py` | 玩具 C（`factor` 参与计算 + `noise` 无关，gcc -O0 -no-pie）+ `--stub addr=0x0/0xff` | factor 两个值均判「变 → 参与计算」、noise 均判「不变 → 无关通道」exit 0；非 x86-64 / imm32 溢出（不加 `--rax`）exit 3 |

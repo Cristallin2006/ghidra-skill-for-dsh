@@ -57,7 +57,7 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；长任务（load / version-track）走后台 + `@out` 落盘
 - **机械闸门，不靠自觉**：14 条铁律的执行载体是脚本——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、`resolve` 缺证据 exit 2 的反向门、hypothesis/plan 落账、churn 覆盖度信号）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
-- **判定性实验优先**：参数角色/因子参与度不靠调用约定猜——`oracle_family.py` 打桩隔离单因子、`model_diff.py` 模型对拍输出分歧指纹（低半字全对 ⇒ 接口错不是算法错）
+- **判定性实验优先**：参数角色/因子参与度不靠调用约定猜——`oracle_family.py` 打桩隔离单因子（基线无输出自动抑制因果判词）、`model_diff.py` 模型对拍输出分歧指纹（宽度级 16/32 位半块规律 + 字节级 nibble 规律 ⇒ 接口错不是算法错；宽度级命中绝不落"疑似算法错"）
 - **验证独立性**：结论强制独立来源，无则标 ⚠UNVERIFIED——Google P0 Naptime 的 Perfect Verification 原则
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做（ghidra-core/SKILL.md §8）
 

@@ -42,6 +42,10 @@ While any anomaly is open, `stuck` is REFUSED (exit 2) unless --ack lists
 every open anomaly id ("I know these are unchecked") — ack or waive
 unblocks stuck, so missing tooling can never deadlock the loop.
 
+Exit-code convention: 0 = success; 1 = usage/environment error (missing
+file, malformed input); 2 = mechanical gate rejection (missing --delta,
+missing --evidence, --note/--waive violation, unresolved anomalies).
+
 Long-text args (--conclusion/--evidence/--quote) accept a file instead:
 --conclusion-file F etc. (UTF-8). Use files from PowerShell 5.1 — embedded
 quotes in inline args break parameter boundaries there.
@@ -428,9 +432,9 @@ def cmd_resolve(args) -> int:
     waive = (args.waive or "").strip()
     if bool(note) == bool(waive):
         print(json.dumps({"ok": False,
-                          "error": "--note 与 --waive 二选一，必须且只能给一个"},
+                          "error": "--note 与 --waive 二选一，必须且只能给一个（机械门）"},
                          ensure_ascii=False))
-        return 1
+        return 2
     evidence = (args.evidence or "").strip()
     if args.evidence_file:
         p = Path(args.evidence_file)
