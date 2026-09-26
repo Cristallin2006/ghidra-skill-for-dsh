@@ -221,6 +221,7 @@ export JAVA_HOME="C:/Java"
 - session/registry 在 `<ws>/rpc-state/`（`GHIDRA_RPC_STATE_DIR`）；daemon 日志在 `<ws>/rpc-localappdata/ghidra-rpc/*.log`
 - 所有 handler 由全局锁串行化——**并发客户端不会并行执行**，长命令会挡住其他命令
 - daemon 崩溃后下一条命令自动按 session 重启（auto-restart）；`stop` 不干净时删 endpoint 文件再起
+- **改了 `engine/` 下任何代码必须重启 daemon 才生效**（daemon 是长驻进程，启动时一次性加载 engine 代码；scripts/ 与文档改动不用）：`pkill -f 'ghidra_rpc[.]daemon'` 后下一条 rpc 命令自动拉起新 daemon。否则会出现"改了引擎、测了还是旧行为"的假缺陷——排障前先核对 daemon 启动时间晚于引擎改动时间
 
 ## 7. PyGhidra 移植须知
 
