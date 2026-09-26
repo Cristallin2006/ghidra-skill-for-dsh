@@ -75,7 +75,7 @@ dump 表达式：`reg+/-0xoff:len`（寄存器相对）、`0x地址:len`（Ghidr
 ② **gdb + pwndbg**（WSL 已装）：断点单步、内存断点；`wsl -d Ubuntu -- gdb /mnt/c/.../sample`
 ③ **angr**（re-tools-venv 已装）：符号执行求输入——"什么输入能让 check 返回 1"的直接求法，路径爆炸时慎用
 
-## 3.5 三个高价值套路（五题复盘实战）
+## 3.5 四个高价值套路（五题复盘 + chal 复盘实战）
 
 **① 外部随机/时间源是输入，不是逻辑**：校验依赖 `time()`/随机数/环境时，先判它是"输入"还是"逻辑"。是输入 → **合法地构造/覆写它**，把概率型 oracle 变成确定性 oracle——且不需要 patch 任何字节，天然满足铁律 10 的验证独立性（复盘实例：snake.exe 的 4 个关键格子由 `time.time()` 播种，命中概率 1/40320；枚举 FILETIME 后 frida hook `GetSystemTimeAsFileTime` 覆写返回值，未修改的二进制自己打印 flag）。覆写模板：`scripts/frida_time_hook.py`（Windows `GetSystemTimeAsFileTime` / Linux `time`/`gettimeofday` / Java `System.currentTimeMillis`）。
 
@@ -86,6 +86,16 @@ dump 表达式：`reg+/-0xoff:len`（寄存器相对）、`0x地址:len`（Ghidr
 组合记忆：**打开用 Post、连点用 Send**。驱动脚本：`scripts/win_gui_drive.py`。
 
 **③ 打桩 oracle 家族（单因子隔离）**：任一因子（函数返回值/随机源/配置字）是否参与计算存疑时，不要继续读码——把它打桩成常量看输出变不变。工具：ghidra-core `scripts/oracle_family.py`，binary + `--stub 0xaddr=0xval`（同地址多个值 = 一个家族）批量产 patched 副本（x86-64 函数头写 `mov eax,imm32;ret`）逐个运行出差分表：**输出变 ⇒ 该因子参与计算；任意常量下都不变 ⇒ 无关通道，立即停止在它上面读码**。这是推翻"参数角色读反"类错模型的决定性实验（DEFCON26 复盘 R1：`FUN_13d74` 角色被读反，错模型持有数小时；打桩实验几分钟即证伪）。落账按 `--source runtime-oracle`；注意这是 patch 态运行，只回答"参不参与"，验证数据模型仍须未修改进程 + 独立来源（§4①）。
+
+**④ 机器真值路线（gdb 帧槽位取数，chal 复盘 E6）——四前置条件全满足才走**：
+
+1. 本机可运行的 **native** 样本（CPython 扩展/so/未壳 PE）；
+2. 语义落在**栈槽**上（函数参数/局部变量，而非寄存器即时值）；
+3. 上游有**宿主语言层遮住真值**（Cython 包装、FFI 边界、回调入 native）；
+4. 「反编译文本 → 模型」**连续两轮对不上**（扰动实验先做过，铁律 14）。
+
+满足 → **不要把它当最后手段**：断在 Python API 包装函数（`PyLong_FromLong` 等），dump 调用者栈帧按槽位取真值。**自写解码器先用已知值自检**（解一个 `int(1)` 就知道布局判没判对——CPython ≥3.12 是 `lv_tag`（`ndigits<<3|sign`），pre-3.12 是 `ob_size`；布局判别与 `const_scan --binary` 同源；chal 复盘 E5：第一版按 `ob_size` 解 3.12 全部解成 `None`，空结果本身就是强异常信号）。**反例（不要走这条路）**：Go/Rust 大二进制（先 pclntab/GoReSym、`rustfilt` demangle）、加壳样本（先 re-unpack 脱壳）、.NET/Java/DEX（反编译层更高效）、内核/固件/跨架构（remote stub 或 qemu-user，见跨架构铁则）。
+
 
 ## 4. 验证可信度（铁律 10 细则，encode 复盘 E2/E3）
 

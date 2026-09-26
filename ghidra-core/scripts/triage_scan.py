@@ -273,10 +273,11 @@ def run():
         }
 
         # --- language / packer hints ---
-        hint_strings = {"go": False, "rust": False, "python": False}
+        hint_strings = {"go": False, "rust": False, "python": False, "pyx": False}
         go_re = re.compile(r"go\.buildid|runtime\.gopanic")
         rust_re = re.compile(r"panicked at|\.rustc")
         py_re = re.compile(r"PYINSTALLER|pyarmor|python3", re.IGNORECASE)
+        pyx_re = re.compile(r"__Pyx_|cython", re.IGNORECASE)
 
         listing = program.getListing()
         scanned2 = 0
@@ -298,6 +299,8 @@ def run():
                 hint_strings["rust"] = True
             if not hint_strings["python"] and py_re.search(value):
                 hint_strings["python"] = True
+            if not hint_strings["pyx"] and pyx_re.search(value):
+                hint_strings["pyx"] = True
             if all(hint_strings.values()):
                 break
 
@@ -335,11 +338,28 @@ def run():
                 upx = True
                 break
 
+        # CPython 扩展模块（Cython/手写 C 扩展）：exports 有 PyInit_*，
+        # 或 imports 引 CPython API，或字符串含 __Pyx_（Cython 内部符号）。
+        # 命中 = 先走 ctf-patterns §12 元数据路线，别直接啃反编译 C。
+        python_ext = hint_strings["pyx"]
+        if not python_ext:
+            for rec in exports:
+                if str(rec.get("name", "")).startswith("PyInit_"):
+                    python_ext = True
+                    break
+        if not python_ext:
+            for lib, name in all_import_names:
+                if (name.startswith("PyInit_") or name == "Py_Initialize"
+                        or name.startswith("PyExc_")):
+                    python_ext = True
+                    break
+
         result["lang_hints"] = {
             "go": hint_strings["go"],
             "rust": hint_strings["rust"],
             "dotnet": dotnet,
             "python": hint_strings["python"],
+            "python_ext": python_ext,
             "upx": upx
         }
 

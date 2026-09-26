@@ -32,6 +32,14 @@
 - 魔数库：Xorshift32 移位 13/17/5；Xorshift64 移位 12/25/27；TEA `0x9E3779B9`；xxHash `0x9E3779B97F4A7C15`、`0x85EBCA6B`；DJB2 5381；FNV `0xcbf29ce484222325`；ROR13（API 哈希）；GF(2^8) `0x1b`。
 - API 哈希解析别逆哈希：hook 目标 API 抓解析结果。
 - 混合运算逆向：逆序 + 逆操作交换（`add↔sub`、`rol↔ror`、xor 自逆）。
+- **S-box 识别先对指纹，禁止猜标签**（chal 复盘 F2：SM4 S-box 被误标 "AES inverse S-box"，台账结论被推翻过一次）。按前 16 字节比对；对不上就写"未知 256 字节置换"，**不许**写具体算法名：
+
+  | S-box | 前 16 字节（hex） | 校验点 |
+  |---|---|---|
+  | AES forward | `63 7c 77 7b f2 6b 6f c5 30 01 67 2b fe d7 ab 76` | 末字节 `0x16` |
+  | AES inverse | `52 09 6a d5 30 36 a5 38 bf 40 a3 9e 81 f3 d7 fb` | 末字节 `0x7e` |
+  | SM4 | `d6 90 e9 fe cc e1 3d b7 16 b6 14 c2 28 fb 2c 05` | 末字节 `0x48` |
+  | DES S1（32→6bit，64 项） | `e 4 d 1 2 f b 8 3 a 6 c 5 9 0 7`（十进制） | 共 8 盒 512 项 |
 
 ## 4. 自定义 VM 五步法
 
@@ -167,3 +175,44 @@ numpy float16 核对）——harness 用 struct 时要自己 catch 并映到 ±i
 必须恒等。抽查向量：`0x3C00`→1.0；`0x3C01`→1.0009765625；`0x0001`→5.960464477539063e-08；
 `0x03FF`→6.097555160522461e-05；`0x0400`→6.103515625e-05；`0x7BFF`→65504.0。
 harness 的 half→float 方向错一个都不该有——错 = 指数/尾数拼接逻辑本身就错了。
+
+## 12. Cython / CPython 扩展模块元数据速查（先取元数据，再谈建模）
+
+> 触发：triage `lang_hints.python_ext=true`（exports 有 `PyInit_*` / imports 引 `Py_Initialize` /
+> 字符串含 `__Pyx_`）。出处：chal 复盘 §7.1——官方 WP 的元数据手法比纯读反编译 C 省一半时间；
+> 若先取 `co_varnames`，`plVar8`/`local_198` 的角色之谜当场就解。
+> **作用域**：仅限 Cython/手写 CPython 扩展；pyc 走 `pyc-bytecode.md`，PyInstaller 走 pyinstxtractor。
+
+### 12.1 四个元数据源（按杠杆排序）
+
+| 元数据 | 在哪 | 给出什么 |
+|---|---|---|
+| **`_Pyx_PyCode_New*(…, varnames=(...), 'chal.py', '_p1', 19, …)`** | 模块 init 函数里的 code object 构造调用 | **每个 Python 函数的局部变量名 + 源码文件名 + 行号**——`x1,x2,tmp,low,high,ans` 这类名字直接说明谁是谁 |
+| `__Pyx_CreateStringTabAndInitStrings` 里的 `__Pyx_StringTabEntry` 数组 | 数据段（每项 = 指针+长度+编码标志） | 全部 interned 字符串：属性名/变量名/常量串 |
+| `PyLong_FromLong` / `PyLong_FromString(s, 0, base)` | init 函数 / 常量区 | 大整数常量（如 `2654435769`），FromString 能给出超出 C int 的值 |
+| `_Pyx_InitCachedConstants` 里的 `PyTuple_Pack(n, …)` | init 函数 | 常量元组（如 `(2654435769, 3337565984)` = randint 范围对） |
+
+配套：列表常量（`PyList_New(n)` + 槽写）走 `const_scan.py`；槽写全是 `<DAT_…>` 缓存对象时
+加 `--binary` 直接还原成 Python 值（CPython 布局自动投票）。行号也有用：Cython 生成的 C 里
+`uVar34` 之类的行号标记可以把反编译语句**分组回源码行**，先按行分组再读。
+
+### 12.2 本机可 import → 立刻升级为可编程 oracle
+
+CPython 扩展且本机 Python 版本兼容时，`import` 它就完了——之后所有结论用"跑一遍看输出"判定，
+不靠读 C 猜（chal：10 分钟确证 check 语义）。两张技巧卡：
+
+- **Spy 子类拦截属性写入**：`class Spy(mod.Cls): def __setattr__(self,k,v): ...`——直接看到
+  `__init__` 里每个状态单元写几次、真 check 读哪个量；配合 `dir()`/`__dict__` 读全状态。
+- **差分读出累加器**：校验是 `acc == 0` 且 `acc += f(内部字节, 随机抽样)` 时，**强制第 k 个抽样为
+  0/0xFF 看 acc 差值**，逐字节把内部操作数读出来——把"逆整个密码"归约为"已知目标流，求逆 E"。
+  这是"先确定什么算对，再考虑怎么算"的机械形态。
+- **退化配置解耦**：把未知量分成"结构"与"密钥"两组时，先注入退化配置（p1=identity / p2→0 /
+  K 表注入）解耦结构，再用"有特征密钥"解下标——两次实验各解决一半，不要搅在一起。
+- 随机流角色先按 §9 分类（mask/key/target），**未分类禁止写入模型**。
+
+### 12.3 真值被宿主层遮住时
+
+文本模型与 oracle 连续两轮对不上 → 走 re-dynamic「机器真值路线」（gdb 帧槽位取数，
+CPython 3.12 `lv_tag` vs pre-3.12 `ob_size` 布局判别与 `const_scan --binary` 同源）。
+**编译产物里的变量名一律无权威性**（decompiler-pitfalls：Cython 临时槽位会被复用，
+`plVar8` 在不同语句里不是同一个量）——角色用元数据（12.1）或扰动实验（铁律 14）钉，不用名字猜。

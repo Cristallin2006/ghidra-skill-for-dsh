@@ -29,6 +29,7 @@
 | 无 CLR 头但有 `System.Private.CoreLib` | NativeAOT | native，留在 Ghidra |
 | `global-metadata.dat` + libil2cpp | IL2CPP | native 部分在 Ghidra；元数据加密时 key=`SHA256(companyName+"\n"+productName)` |
 | `PYINSTALLER`、`PY`+六位数字 | Python 打包 | pyinstxtractor 解包 → pyc 反编译（版本矩阵见 `pyc-bytecode.md`）；PyArmor 特征 → 转 re-dynamic 动态脱 |
+| exports 有 `PyInit_*` / imports 引 `Py_Initialize` / 字符串含 `__Pyx_`（triage `lang_hints.python_ext=true`） | **Cython/CPython 扩展模块** | **先取元数据再谈建模**（ctf-patterns §12）：string tab / 常量元组 / `co_varnames`+行号钉死变量角色，禁止直接啃反编译 C 猜变量名；本机可直接 `import` 的立刻升级为可编程 oracle；真值被宿主层遮住时走 re-dynamic「机器真值路线」（gdb 帧槽位） |
 | 节名 `UPX0/UPX1` | UPX | `upx -d`；失败 = 元数据被篡改，对照 UPX 源码修头 |
 | 熵 > 7.5 + `.vmp0`/`.themida` | VMProtect/Themida | 不硬逆虚拟化：trace + 断点抓关键输入输出 |
 | WASM magic `\0asm` | WASM | wasm-decompile / wasm2wat，离开 Ghidra（**先确认已装**：`command -v wasm2wat`，缺则 `apt-get install -y wabt wasmtime`） |
