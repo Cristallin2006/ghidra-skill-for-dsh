@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 """gate_sample.py - PreToolUse 首接触门禁：对无台账样本的惯性直读说不。
 
-matcher "Pwsh|Bash"，每次 shell 调用前触发。判定逻辑：
+matcher "Pwsh|pwsh|Bash|bash"（dsh-hook-protocol 的字面量 matcher 是
+**大小写敏感**精确匹配：CLAUDE_LITERAL 模式走 split("|").includes()——
+只写 "Bash" 在 WSL 的 "bash" 工具上静默失效，chal session 即因此零拦截）。
+每次 shell 调用前触发。判定逻辑：
   1. 命令含 ledger.py / doctor.py（台账/工具链自身操作）-> 放行
-  2. 命令含分析动词（xxd/hexdump/strings/objdump/readelf/...）且作用于
-     存在的二进制样本文件（扩展名或 magic 判定；pcap/pcapng 豁免——
-     triage 修头是合法开局）-> 进入台账检查
+  2. 命令含分析动词（xxd/hexdump/strings/objdump/readelf/...）或
+     rpc_driver 深挖子命令（decompile/exec-code/emulate/patch…，路由看门：
+     没分诊就不许深挖），且作用于存在的二进制样本文件（扩展名或 magic
+     判定；pcap/pcapng 豁免——triage 修头是合法开局）-> 进入台账检查
   3. ~/.dsh/ghidra-workspace/out/<样本名>.ledger.jsonl 存在 -> 放行
      （之后的同区回访由 ledger 自己的断路器管）；不存在 -> exit 2 阻断，
-     stderr 指引先 re-triage 分诊 + ledger query。
+     stderr 指引先 re-triage 分诊 + ledger query，深挖另须先加载
+     ghidra-static 全文。
 
 定位：防"惯性直读"，不防蓄意绕过（命令写进脚本文件再执行即可绕过）。
 绕过会在台账缺失上留痕。任何内部异常 -> 放行（exit 0），门禁故障不许
@@ -34,8 +39,17 @@ VERBS = re.compile(
     r"\b(xxd|hexdump|hd|od|strings|objdump|readelf|nm|rabin2|r2|radare2|gdb|"
     r"llvm-objdump|dumpbin|windbg|cdb)\b", re.IGNORECASE)
 
-# 台账/工具链自身操作一律放行
-ALLOW = re.compile(r"ledger\.py|doctor\.py|triage_scan\.py|rpc_driver\.py|driver\.py")
+# 台账/工具链自身操作一律放行（rpc_driver 不再整体豁免——深挖子命令走路由门）
+ALLOW = re.compile(r"ledger\.py|doctor\.py|triage_scan\.py|driver\.py")
+
+# 路由看门（chal session：re-triage 之后一次都没加载 ghidra-static 就深挖）。
+# rpc_driver 的深挖子命令与裸分析动词同等待遇：无台账 = 没分诊 = 阻断。
+# ensure/status/stop/triage/只读元数据（imports/exports/functions/strings…）
+# 仍放行——它们是分诊动作本身。
+RPC = re.compile(r"rpc_driver\.py")
+RPC_DEEP = re.compile(
+    r"\b(decompile(?:-all)?|search-decompiled|exec-code|disassemble|assemble|"
+    r"write-bytes|patch|emulate-(?:function|program)|version-track)\b")
 
 SAMPLE_EXT = {".exe", ".dll", ".so", ".bin", ".elf", ".dex", ".apk",
               ".class", ".sys", ".com", ".scr", ".ocx", ".dylib", ".o", ".a"}
@@ -89,9 +103,18 @@ def main() -> int:
     cmd = ti.get("command") or ti.get("cmd") or ""
     if not isinstance(cmd, str) or not cmd.strip():
         return 0
-    if ALLOW.search(cmd):
+    # 先判 rpc_driver：深挖子命令走路由门，其余（ensure/triage/只读元数据）放行。
+    # 注意不能靠 ALLOW 里的 driver\.py 豁免 rpc_driver——"driver\.py" 是
+    # "rpc_driver.py" 的子串，会整体漏闸。
+    if RPC.search(cmd):
+        if not RPC_DEEP.search(cmd):
+            return 0
+        deep_rpc = True
+    elif ALLOW.search(cmd):
         return 0
-    if not VERBS.search(cmd):
+    else:
+        deep_rpc = False
+    if not VERBS.search(cmd) and not deep_rpc:
         return 0
 
     cwd = Path(payload.get("cwd") or os.getcwd())
@@ -103,13 +126,17 @@ def main() -> int:
             continue
         if ledger_exists(sample):
             return 0
+        trigger = "rpc 深挖（decompile/exec-code/emulate 等）" if deep_rpc \
+            else "分析类直读"
         msg = (
-            f"[gate_sample · 铁律7 先查后析] 检测到对样本 {sample.name} 的分析类直读，"
+            f"[gate_sample · 铁律7 先查后析] 检测到对样本 {sample.name} 的{trigger}，"
             f"但该样本还没有台账。\n"
             f"先走流程，再动手：\n"
             f"  ① 用 skill 工具加载 re-triage 完成分诊（确认类型/加壳/语言）\n"
             f"  ② python ~/.dsh/skills/ghidra-core/scripts/ledger.py query <样本路径> 查重\n"
             f"  ③ 首个观察用 ledger.py observe 落账（台账文件此时建立，本门禁随之放行）\n"
+            f"深挖（反编译/exec-code/仿真/patch）前还必须用 skill 工具加载 "
+            f"ghidra-static 全文——chal session 事故：全程未加载就深挖。\n"
             f"若本次是非分析用途（误伤）：把样本加入台账（任一 observe）后即不再拦截。"
         )
         print(msg, file=sys.stderr)

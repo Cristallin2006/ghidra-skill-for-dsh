@@ -17,8 +17,10 @@ Commands:
   query    <binary> [--region R]                       look before you analyze
   observe  <binary> --region R --tool T --note N [--delta D]
   conclude <binary> --conclusion C --address A --evidence E \
-           --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn]
-           （非地址型题目用 --locus region:/channel:/proto: 前缀代替 --address）
+           --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn] \
+           [--kind finding|flag] [--program-accept P]
+           （非地址型题目用 --locus region:/channel:/proto: 前缀代替 --address；
+           --kind flag 必须 --program-accept 且禁止 --source self-script）
   anomaly  <binary> --region R --note N --consequence C
   resolve  <binary> --anomaly ID (--note N --evidence E | --waive W)
   hypothesis <binary> --text H --if-true P --if-false Q --test "<cmd>" [--id K]
@@ -59,6 +61,13 @@ self-script requires --harness <script path> (a harness that has not passed
 its known-answer self-check is zero evidence). --quote attaches the verbatim
 tool output the conclusion rests on. independent=no conclusions render as
 UNVERIFIED and must not be delivered as-is.
+
+Flag conclusions (Iron Rule 10⑤, mechanical): --kind flag MUST carry
+--program-accept "feed command + verbatim success response of the UNMODIFIED
+original program / platform" and MUST NOT use --source self-script — a
+self-written probe equivalence is not the program's check (chal session
+circular-verification incident). Flag entries render with 🏁; a flag entry
+without program_accept renders ⚠缺程序接受证据.
 
 Region syntax: 0x1000-0x1100 | 0x1000+0x40 | 0x1000 (point) | check_flag
 (name) | name:literal (force name, for names that look like hex).
@@ -387,11 +396,41 @@ def cmd_conclude(args) -> int:
                          ensure_ascii=False))
         return 1
 
+    kind = getattr(args, "kind", "finding") or "finding"
+    program_accept = _resolve(getattr(args, "program_accept", None),
+                              getattr(args, "program_accept_file", None),
+                              "program-accept")
+    # 铁律 10⑤ 硬门（chal session 循环论证事故：agent 把自己写的探针等价式
+    # 当成程序判定，交付错 flag 并标 --independent yes）。flag 类结论的唯一
+    # 合法 VERIFIED 证据是「未修改的原程序/平台接受候选输入」本身。
+    if kind == "flag":
+        if not program_accept:
+            print(json.dumps({"ok": False,
+                              "error": "--kind flag 必须加 --program-accept "
+                                       "\"投喂命令 + 未修改原程序/平台的成功响应原文\""
+                                       "（长文本走 --program-accept-file）。"
+                                       "自写探针的等价式不是程序判定——"
+                                       "探针只能支撑 --kind finding"},
+                             ensure_ascii=False))
+            return 2
+        if args.source == "self-script":
+            print(json.dumps({"ok": False,
+                              "error": "--kind flag 不允许 --source self-script："
+                                       "flag 的权威来源是原程序/平台的接受行为，"
+                                       "写 --source runtime-oracle 并把实测记录填进 "
+                                       "--program-accept"},
+                             ensure_ascii=False))
+            return 2
+
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
              "id": cid, "conclusion": conclusion,
              "address": (args.address or "").strip(), "region": locus,
              "evidence": evidence,
              "source": args.source, "independent": args.independent}
+    if kind != "finding":
+        entry["kind"] = kind
+    if program_accept:
+        entry["program_accept"] = program_accept
     if args.harness:
         entry["harness"] = args.harness.strip()
     if quote:
@@ -680,9 +719,17 @@ def render(binary: Path) -> Path:
         if e.get("harness"):
             source += f"({e['harness']})"
         indep = e.get("independent", "—")
+        evidence_cell = e['evidence'].replace(chr(10), ' ⏎ ')
+        if e.get("kind") == "flag":
+            concl = "🏁 " + concl
+            if e.get("program_accept"):
+                evidence_cell += (" ｜程序接受: "
+                                  + e["program_accept"].replace(chr(10), ' ⏎ '))
+            else:
+                concl = "⚠缺程序接受证据 " + concl
         if indep == "no":
             concl = "⚠UNVERIFIED " + concl
-        lines.append(f"| {cid} | {concl} | {e.get('address') or e.get('region', '—')} | {e['evidence'].replace(chr(10), ' ⏎ ')} "
+        lines.append(f"| {cid} | {concl} | {e.get('address') or e.get('region', '—')} | {evidence_cell} "
                      f"| {source} | {indep} | {e['ts']} |")
     lines += ["", "## 已踏勘区域",
               "| 区域 | 回访次数 | 工具 | 最近观察 | 差异链 |",
@@ -753,7 +800,8 @@ _SCHEMA = {
                   "evidence", "source", "independent"},
                  {"source": {"read_views", "self-script", "decompiler-render",
                              "runtime-gdb", "runtime-oracle", "manual"},
-                  "independent": {"yes", "no"}}),
+                  "independent": {"yes", "no"},
+                  "kind": {"finding", "flag"}}),
     "anomaly": ({"type", "id", "status", "ts", "sha16", "region", "note",
                  "consequence"}, {"status": {"open"}}),
     "anomaly-resolve": ({"type", "anomaly_id", "status", "note", "ts"},
@@ -846,6 +894,13 @@ def main() -> int:
     p.add_argument("--quote-file", help="quote 长文本走文件（UTF-8）")
     p.add_argument("--id", help="字符串/整数均可（C1、Q5-1…）；缺省 = 下一个空闲整数")
     p.add_argument("--overturn", action="store_true")
+    p.add_argument("--kind", choices=["finding", "flag"], default="finding",
+                   help="flag=flag/答案类结论：必须配 --program-accept（铁律 10⑤ 硬门），"
+                        "且不允许 --source self-script")
+    p.add_argument("--program-accept",
+                   help="kind=flag 必填：未修改原程序/平台接受候选输入的实测记录"
+                        "（投喂命令 + 成功响应原文）")
+    p.add_argument("--program-accept-file", help="program-accept 长文本走文件（UTF-8）")
     p.set_defaults(fn=cmd_conclude)
 
     p = sub.add_parser("anomaly", help="异常落账（铁律 12：不一致必须转成可检验假设，--consequence 必填）")
