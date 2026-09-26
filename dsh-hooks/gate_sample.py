@@ -14,6 +14,9 @@ matcher "Pwsh|pwsh|Bash|bash"（dsh-hook-protocol 的字面量 matcher 是
      （之后的同区回访由 ledger 自己的断路器管）；不存在 -> exit 2 阻断，
      stderr 指引先 re-triage 分诊 + ledger query，深挖另须先加载
      ghidra-static 全文。
+  4. Cython 前置（f862c151）：有台账但 triage 报 lang_hints.python_ext=true
+     且台账无 const_scan/frame_map 证据时，rpc 深挖同样 exit 2——
+     先取 §12 元数据 + 帧槽位真值再建模。
 
 定位：防"惯性直读"，不防蓄意绕过（命令写进脚本文件再执行即可绕过）。
 绕过会在台账缺失上留痕。任何内部异常 -> 放行（exit 0），门禁故障不许
@@ -94,6 +97,37 @@ def ledger_exists(sample: Path) -> bool:
     return (out / (sample.name + ".ledger.jsonl")).is_file()
 
 
+CYTHON_EVIDENCE = re.compile(r"const_scan|frame_map")
+
+
+def python_ext_unprimed(sample: Path) -> bool:
+    """triage 报 python_ext=true 且台账无 const_scan/frame_map 证据 -> True。
+
+    f862c151 session：跳过 §12 元数据与帧槽位直建轮函数模型，
+    手写 95 项 datmap + 128 变体盲搜——Cython 样本的两类真值是强制前置。
+    """
+    out = Path.home() / ".dsh" / "ghidra-workspace" / "out"
+    triage = out / (sample.name + ".triage.json")
+    if not triage.is_file():
+        return False
+    try:
+        hints = json.loads(triage.read_text(
+            encoding="utf-8", errors="replace")).get("lang_hints") or {}
+    except Exception:
+        return False
+    if not hints.get("python_ext"):
+        return False
+    ledger = out / (sample.name + ".ledger.jsonl")
+    if ledger.is_file():
+        try:
+            if CYTHON_EVIDENCE.search(
+                    ledger.read_text(encoding="utf-8", errors="replace")):
+                return False
+        except OSError:
+            pass
+    return True
+
+
 def main() -> int:
     raw = sys.stdin.read()
     if not raw.strip():
@@ -125,6 +159,21 @@ def main() -> int:
         if sample is None:
             continue
         if ledger_exists(sample):
+            if deep_rpc and python_ext_unprimed(sample):
+                msg = (
+                    f"[gate_sample · Cython 前置] {sample.name} 的 triage 判定 "
+                    f"lang_hints.python_ext=true，但台账没有 const_scan / "
+                    f"frame_map 证据。\n"
+                    f"Cython/CPython 扩展深挖轮函数之前必须先取两类真值"
+                    f"（f862c151：跳过本步 → 手写 95 项 datmap + 128 变体盲搜）：\n"
+                    f"  ① python ~/.dsh/skills/ghidra-core/scripts/const_scan.py "
+                    f"--binary <样本>（ctf-patterns §12 元数据常量重建）\n"
+                    f"  ② python ~/.dsh/skills/ghidra-core/scripts/frame_map.py "
+                    f"<函数地址>（栈帧槽位归属——伪码 local_XXXX 不可信）\n"
+                    f"落账（observe）后本门放行。"
+                )
+                print(msg, file=sys.stderr)
+                return 2
             return 0
         trigger = "rpc 深挖（decompile/exec-code/emulate 等）" if deep_rpc \
             else "分析类直读"
