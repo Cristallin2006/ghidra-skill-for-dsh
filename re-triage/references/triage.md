@@ -31,7 +31,8 @@
 | `PYINSTALLER`、`PY`+六位数字 | Python 打包 | pyinstxtractor 解包 → pyc 反编译（版本矩阵见 `pyc-bytecode.md`）；PyArmor 特征 → 转 re-dynamic 动态脱 |
 | 节名 `UPX0/UPX1` | UPX | `upx -d`；失败 = 元数据被篡改，对照 UPX 源码修头 |
 | 熵 > 7.5 + `.vmp0`/`.themida` | VMProtect/Themida | 不硬逆虚拟化：trace + 断点抓关键输入输出 |
-| WASM magic `\0asm` | WASM | wasm-decompile / wasm2wat，离开 Ghidra |
+| WASM magic `\0asm` | WASM | wasm-decompile / wasm2wat，离开 Ghidra（**先确认已装**：`command -v wasm2wat`，缺则 `apt-get install -y wabt wasmtime`） |
+| ELF 但 `e_machine` 非 x86-64（riscv64/aarch64/mips…，`readelf -h` 看 Machine） | foreign-arch | **先 import 进 Ghidra 用对应 processor 反编译**（`/opt/ghidra/Ghidra/Processors/` 有 RISCV/AARCH64 等），objdump 只用于核对单点——手读整份 dump 是参数角色错读的土壤（DEFCON26 复盘：2.3MB/97449 行 asm 手读导致 riscv64 `chall` 全程没进 Ghidra）；运行/调试走 re-dynamic 跨架构分支（qemu-user + gdb-multiarch，本机已装）；跨架构题常带 host/协议层，台账用 `--locus` 按多方件记账 |
 
 ## 4. 字符串快赢（triage 期必扫）
 

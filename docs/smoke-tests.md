@@ -36,3 +36,5 @@
 | `const_scan.py` | Cython/C 反编译 C 或 decompile-all @out JSON | 重建 `PyList_New/PyTuple_New` 字面量；小整数聚集告警（chal 复盘 L 表 48 项） |
 | `xor_scan.py` | 含单字节 XOR 层的 blob | Top N 命中正确密钥；`--dump` 产物可打印/magic 正确 |
 | `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；unicorn 缺失时 exit 3 且提示进 re-tools-venv |
+| `model_diff.py` | 玩具对：oracle=正确实现 stdin→stdout 恒等，model=半字交换/低半字置常量 | 半字交换指纹判「高低半字交换」、低半字判「低半字全对」，判词均为疑似接口错且 exit 2；恒等对 exit 0；不存在命令 exit 3 |
+| `oracle_family.py` | 玩具 C（`factor` 参与计算 + `noise` 无关，gcc -O0 -no-pie）+ `--stub addr=0x0/0xff` | factor 两个值均判「变 → 参与计算」、noise 均判「不变 → 无关通道」exit 0；非 x86-64 / imm32 溢出（不加 `--rax`）exit 3 |

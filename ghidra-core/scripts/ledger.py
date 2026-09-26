@@ -18,8 +18,12 @@ Commands:
   observe  <binary> --region R --tool T --note N [--delta D]
   conclude <binary> --conclusion C --address A --evidence E \
            --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn]
+           （非地址型题目用 --locus region:/channel:/proto: 前缀代替 --address）
   anomaly  <binary> --region R --note N --consequence C
   resolve  <binary> --anomaly ID (--note N --evidence E | --waive W)
+  hypothesis <binary> --text H --if-true P --if-false Q --test "<cmd>" [--id K]
+  hypothesis <binary> --resolve-id K --status confirmed|killed --evidence E
+  plan     <binary> --axes "charset(95) x order(2)" --budget 570 [--note N]
   stuck    <binary> --at R --tried "A,B" --escalate TARGET [--ack "A1,A3"]
   status   <binary>
   render   <binary>
@@ -152,6 +156,36 @@ def next_anomaly_id(entries: list[dict]) -> str:
 def _anomaly_sort_key(aid: str):
     m = re.match(r"^A(\d+)$", str(aid))
     return (0, int(m.group(1))) if m else (1, str(aid))
+
+
+def hypothesis_resolves(entries: list[dict]) -> dict:
+    """hypothesis_id -> 最新一条 hypothesis-resolve（与 anomaly 同构的 append-only 回放）。"""
+    out = {}
+    for e in entries:
+        if e.get("type") == "hypothesis-resolve":
+            out[str(e.get("hypothesis_id"))] = e
+    return out
+
+
+def open_hypotheses(entries: list[dict]) -> list[dict]:
+    resolved = hypothesis_resolves(entries)
+    return [e for e in entries if e.get("type") == "hypothesis"
+            and str(e.get("id")) not in resolved]
+
+
+def next_hypothesis_id(entries: list[dict]) -> str:
+    n = 0
+    for e in entries:
+        if e.get("type") == "hypothesis":
+            m = re.match(r"^H(\d+)$", str(e.get("id", "")))
+            if m:
+                n = max(n, int(m.group(1)))
+    return f"H{n + 1}"
+
+
+def _hypothesis_sort_key(hid: str):
+    m = re.match(r"^H(\d+)$", str(hid))
+    return (0, int(m.group(1))) if m else (1, str(hid))
 
 
 def parse_region(text: str):
@@ -318,8 +352,12 @@ def cmd_conclude(args) -> int:
                               "error": f"--{name} 或 --{name}-file 必须给其一"},
                              ensure_ascii=False))
             return 1
-    if not (args.address or "").strip():
-        print(json.dumps({"ok": False, "error": "--address 必填"},
+    locus = (args.locus or args.address or "").strip()
+    if not locus:
+        print(json.dumps({"ok": False,
+                          "error": "--address 或 --locus 必填其一；非地址型题目"
+                                   "（协议/算法/多方件）用 region: / channel: / proto: 前缀，"
+                                   "如 --locus region:channel-model"},
                          ensure_ascii=False))
         return 1
 
@@ -347,7 +385,7 @@ def cmd_conclude(args) -> int:
 
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
              "id": cid, "conclusion": conclusion,
-             "address": args.address.strip(), "region": args.address.strip(),
+             "address": (args.address or "").strip(), "region": locus,
              "evidence": evidence,
              "source": args.source, "independent": args.independent}
     if args.harness:
@@ -437,6 +475,90 @@ def cmd_resolve(args) -> int:
     return 0
 
 
+def cmd_hypothesis(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entries = load_entries(jsonl)
+    if args.resolve_id:
+        # 关闭模式：与 resolve 反向门同构——confirmed/killed 都必须给可检验证据，
+        # 叙述不是证据，缺 evidence exit 2。
+        hid = str(args.resolve_id).strip()
+        if not args.status:
+            print(json.dumps({"ok": False,
+                              "error": "--resolve-id 关闭假设时必须给 "
+                                       "--status confirmed|killed"},
+                             ensure_ascii=False))
+            return 1
+        evidence = (args.evidence or "").strip()
+        if args.evidence_file:
+            p = Path(args.evidence_file)
+            if not p.is_file():
+                print(json.dumps({"ok": False,
+                                  "error": f"--evidence-file not found: {p}"},
+                                 ensure_ascii=False))
+                return 1
+            evidence = p.read_text(encoding="utf-8").strip()
+        if not evidence:
+            print("[反向门 · 铁律4] hypothesis 关闭（confirmed/killed）必须给可检验证据"
+                  "（检验命令的实际输出/读数），叙述不是证据——")
+            print("  重新执行并加: --evidence \"跑 --test 命令的关键输出\""
+                  "（长文本走 --evidence-file）")
+            return 2
+        target = next((e for e in entries if e.get("type") == "hypothesis"
+                       and str(e.get("id")) == hid), None)
+        resolved = hypothesis_resolves(entries)
+        if target is None or hid in resolved:
+            reason = "不存在" if target is None \
+                else f"已关闭（{resolved[hid]['status']}）"
+            opens = [str(e["id"]) for e in open_hypotheses(entries)]
+            print(json.dumps({"ok": False,
+                              "error": f"hypothesis {hid} {reason}，无法关闭",
+                              "open_hypotheses": opens}, ensure_ascii=False))
+            return 2
+        entry = {"type": "hypothesis-resolve", "hypothesis_id": hid,
+                 "status": args.status, "evidence": evidence, "ts": now()}
+        append_entry(jsonl, entry)
+        auto_render(binary)
+        print(json.dumps({"ok": True, "hypothesis": hid,
+                          "status": args.status}, ensure_ascii=False))
+        return 0
+    # 创建模式
+    fields = {"text": args.text, "if_true": args.if_true,
+              "if_false": args.if_false, "test": args.test}
+    missing = [f"--{k.replace('_', '-')}" for k, v in fields.items()
+               if not (v or "").strip()]
+    if missing:
+        print(json.dumps({"ok": False,
+                          "error": f"创建假设必填: {' '.join(missing)}"
+                                   "（--if-true/--if-false 回答「若为真/若为假，"
+                                   "下一步分别做什么」，--test 给出判定命令）"},
+                         ensure_ascii=False))
+        return 1
+    hid = args.id or next_hypothesis_id(entries)
+    entry = {"type": "hypothesis", "id": hid, "status": "open", "ts": now(),
+             "sha16": sha16(binary),
+             "text": args.text.strip(), "if_true": args.if_true.strip(),
+             "if_false": args.if_false.strip(), "test": args.test.strip()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "id": hid, "status": "open",
+                      "ledger": str(jsonl)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_plan(args) -> int:
+    binary = require_binary(args)
+    jsonl, _ = ledger_paths(binary)
+    entry = {"type": "plan", "ts": now(), "sha16": sha16(binary),
+             "axes": args.axes.strip(), "budget": args.budget,
+             "note": (args.note or "").strip()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "budget": args.budget,
+                      "ledger": str(jsonl)}, ensure_ascii=False))
+    return 0
+
+
 def cmd_stuck(args) -> int:
     binary = require_binary(args)
     jsonl, _ = ledger_paths(binary)
@@ -486,6 +608,9 @@ def cmd_status(args) -> int:
         "observations": len(obs),
         "conclusions": len([e for e in entries if e.get("type") == "conclude"]),
         "anomalies": len(anoms),
+        "hypotheses": len([e for e in entries if e.get("type") == "hypothesis"]),
+        "open_hypotheses": open_hypotheses(entries),
+        "plans": len([e for e in entries if e.get("type") == "plan"]),
         "stucks": [e for e in entries if e.get("type") == "stuck"],
         "open_anomalies": open_anomalies(entries),
         "revisit_hotspots": {r: n for r, n in sorted(hot.items(),
@@ -495,6 +620,22 @@ def cmd_status(args) -> int:
         out["hint"] = (f"已入账 {len(obs)} 次观察但 0 条 anomaly。若期间遇到过任何不一致"
                        "（工具误报/读数异常/假设冲突/harness 异常），按铁律 12 用 "
                        "ledger.py anomaly --consequence 落账，禁止降级为噪声")
+    workdir = getattr(args, "workdir", None)
+    if workdir:
+        wd = Path(workdir)
+        if wd.is_dir():
+            scripts = [p for p in wd.rglob("*.py") if p.is_file()]
+            ratio = len(scripts) / max(len(entries), 1)
+            out["workdir_scripts"] = len(scripts)
+            if len(scripts) >= 5 and ratio > 5:
+                out["churn_hint"] = (
+                    f"work 目录 {len(scripts)} 个脚本 vs 台账 {len(entries)} 条目"
+                    f"（比值 {ratio:.1f} > 5）——典型的「记账死掉 + 同路径换措辞重试」"
+                    "信号（DEFCON26 复盘 R3：36 脚本 vs 11 条目）。立即审视："
+                    "这些脚本是否各写各的 region 绕开了 observe 断路器？"
+                    "未入账的观测补 observe，卡住先 stuck")
+        else:
+            out["workdir_warning"] = f"--workdir 不存在: {wd}"
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 
@@ -522,7 +663,7 @@ def render(binary: Path) -> Path:
         "<!-- 由 ledger.py render 自动生成，手工改动会被覆盖；入账走 ledger.py -->",
         "",
         "## 权威结论（写入即锁定；⚠UNVERIFIED = 无独立来源，禁止原样交付）",
-        "| # | 结论 | 地址 | 证据（命令/输出要点） | 来源 | 独立验证 | 时间 |",
+        "| # | 结论 | 位置 | 证据（命令/输出要点） | 来源 | 独立验证 | 时间 |",
         "|---|------|------|----------------------|------|---------|------|",
     ]
     for cid in sorted(latest, key=lambda k: (0, k) if isinstance(k, int)
@@ -537,7 +678,7 @@ def render(binary: Path) -> Path:
         indep = e.get("independent", "—")
         if indep == "no":
             concl = "⚠UNVERIFIED " + concl
-        lines.append(f"| {cid} | {concl} | {e['address']} | {e['evidence'].replace(chr(10), ' ⏎ ')} "
+        lines.append(f"| {cid} | {concl} | {e.get('address') or e.get('region', '—')} | {e['evidence'].replace(chr(10), ' ⏎ ')} "
                      f"| {source} | {indep} | {e['ts']} |")
     lines += ["", "## 已踏勘区域",
               "| 区域 | 回访次数 | 工具 | 最近观察 | 差异链 |",
@@ -568,6 +709,28 @@ def render(binary: Path) -> Path:
                      f"| {e['note'].replace(chr(10), ' ⏎ ')} "
                      f"| {e['consequence'].replace(chr(10), ' ⏎ ')} "
                      f"| {how} | {e['ts']} |")
+    hyps = [e for e in entries if e.get("type") == "hypothesis"]
+    hres = hypothesis_resolves(entries)
+    lines += ["", "## 假设（hypothesis，open 在前）",
+              "| id | 状态 | 假设 | 若为真则 | 若为假则 | 判定命令 | 关闭证据 | 时间 |",
+              "|----|------|------|---------|---------|----------|---------|------|"]
+    for e in sorted(hyps, key=lambda x: (str(x.get("id")) in hres,
+                                         _hypothesis_sort_key(x.get("id")))):
+        r = hres.get(str(e.get("id")))
+        status = r["status"] if r else "open"
+        ev = r["evidence"].replace("\n", " ⏎ ") if r else "—"
+        lines.append(f"| {e['id']} | {status} | {e['text'].replace(chr(10), ' ⏎ ')} "
+                     f"| {e['if_true'].replace(chr(10), ' ⏎ ')} "
+                     f"| {e['if_false'].replace(chr(10), ' ⏎ ')} "
+                     f"| {e['test'].replace(chr(10), ' ⏎ ')} "
+                     f"| {ev} | {e['ts']} |")
+    plans = [e for e in entries if e.get("type") == "plan"]
+    lines += ["", "## 枚举计划（plan，铁律 13 轴矩阵+候选预算）",
+              "| 时间 | 轴矩阵 | 候选预算 | 备注 |",
+              "|------|--------|---------|------|"]
+    for e in plans:
+        lines.append(f"| {e['ts']} | {e['axes'].replace(chr(10), ' ⏎ ')} "
+                     f"| {e['budget']} | {e.get('note', '').replace(chr(10), ' ⏎ ')} |")
     lines.append("")
     md.write_text("\n".join(lines), encoding="utf-8")
     return md
@@ -591,6 +754,11 @@ _SCHEMA = {
                  "consequence"}, {"status": {"open"}}),
     "anomaly-resolve": ({"type", "anomaly_id", "status", "note", "ts"},
                         {"status": {"resolved", "waived"}}),
+    "hypothesis": ({"type", "id", "status", "ts", "sha16", "text",
+                    "if_true", "if_false", "test"}, {"status": {"open"}}),
+    "hypothesis-resolve": ({"type", "hypothesis_id", "status", "evidence",
+                            "ts"}, {"status": {"confirmed", "killed"}}),
+    "plan": ({"type", "ts", "sha16", "axes", "budget", "note"}, {}),
     "stuck": ({"type", "ts", "sha16", "at", "tried", "escalate"}, {}),
 }
 
@@ -659,7 +827,8 @@ def main() -> int:
     p.add_argument("binary")
     p.add_argument("--conclusion")
     p.add_argument("--conclusion-file", help="长文本走文件（UTF-8），绕开 shell 引号")
-    p.add_argument("--address", required=True)
+    p.add_argument("--address", help="地址型题目的结论位置（0x…）")
+    p.add_argument("--locus", help="非地址型题目的结论位置：region: / channel: / proto: 前缀；与 --address 二选一")
     p.add_argument("--evidence")
     p.add_argument("--evidence-file", help="长文本走文件（UTF-8）")
     p.add_argument("--source", required=True,
@@ -692,6 +861,29 @@ def main() -> int:
     p.add_argument("--waive", help="为何豁免（工具缺失等客观不可查）")
     p.set_defaults(fn=cmd_resolve)
 
+    p = sub.add_parser("hypothesis", help="可检验假设落账（铁律 4：不一致必须转成可检验假设）；"
+                                          "--resolve-id 关闭时必须 --evidence（反向门，缺证据 exit 2）")
+    p.add_argument("binary")
+    p.add_argument("--text", help="假设内容（H）")
+    p.add_argument("--if-true", help="若为真，下一步做什么（P）")
+    p.add_argument("--if-false", help="若为假，下一步做什么（Q）")
+    p.add_argument("--test", help="判定命令（可复现）")
+    p.add_argument("--id", help="缺省 = 下一个空闲 H<int>")
+    p.add_argument("--resolve-id", help="关闭模式：要关闭的 hypothesis id（H1、H2…）")
+    p.add_argument("--status", choices=["confirmed", "killed"],
+                   help="关闭模式必填：证实 / 证伪")
+    p.add_argument("--evidence", help="关闭模式必填：检验命令的实际输出/读数（反向门）")
+    p.add_argument("--evidence-file", help="evidence 长文本走文件（UTF-8）")
+    p.set_defaults(fn=cmd_hypothesis)
+
+    p = sub.add_parser("plan", help="枚举计划落账（铁律 13：轴矩阵+候选预算，禁止只写在聊天里）")
+    p.add_argument("binary")
+    p.add_argument("--axes", required=True,
+                   help="轴矩阵原文，如 \"charset(95) x order(2) x pack(3)\"")
+    p.add_argument("--budget", required=True, type=int, help="候选预算（总数）")
+    p.add_argument("--note", help="剪轴理由/备注")
+    p.set_defaults(fn=cmd_plan)
+
     p = sub.add_parser("stuck", help="卡点必记（存在 open anomaly 时必须 --ack 全部列出）")
     p.add_argument("binary")
     p.add_argument("--at", required=True)
@@ -701,8 +893,9 @@ def main() -> int:
                                  "语义：我知道这些没查")
     p.set_defaults(fn=cmd_stuck)
 
-    p = sub.add_parser("status", help="台账总览 + 回访热点")
+    p = sub.add_parser("status", help="台账总览 + 回访热点 + （可选）脚本 churn 覆盖度信号")
     p.add_argument("binary")
+    p.add_argument("--workdir", help="题目工作目录：统计 *.py 脚本数 ÷ 台账条目数，>5 打印 churn 警告")
     p.set_defaults(fn=cmd_status)
 
     p = sub.add_parser("render", help="重建 .ledger.md 人读视图")

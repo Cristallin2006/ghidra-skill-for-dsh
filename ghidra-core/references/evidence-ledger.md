@@ -8,7 +8,7 @@
 | 文件 | 角色 | 维护方式 |
 |------|------|----------|
 | `<ws>/out/<样本名>.ledger.jsonl` | 机器真相（append-only，每行一条 JSON） | 只能由 ledger.py 追加 |
-| `<ws>/out/<样本名>.ledger.md` | 人读视图（四张表：权威结论/已踏勘区域/卡点/异常） | 每次入账后自动重建，手工改动会被覆盖 |
+| `<ws>/out/<样本名>.ledger.md` | 人读视图（六张表：权威结论/已踏勘区域/卡点/异常/假设/枚举计划） | 每次入账后自动重建，手工改动会被覆盖 |
 
 ## 命令
 
@@ -21,6 +21,9 @@
 | `conclude` | `<binary> --address --conclusion --evidence --source --independent` | `--harness`（self-script 时必填）`--quote --id --overturn` |
 | `anomaly` | `<binary> --region --note --consequence` | — |
 | `resolve` | `<binary> --anomaly <id>` + `--note`/`--waive` 二选一；`--note` 关闭时 `--evidence` **必填**（反向门，缺证据 exit 2） | `--evidence-file` |
+| `hypothesis`（创建） | `<binary> --text --if-true --if-false --test` | `--id` |
+| `hypothesis`（关闭） | `<binary> --resolve-id <id> --status confirmed\|killed` + `--evidence` **必填**（反向门，缺证据 exit 2） | `--evidence-file` |
+| `plan` | `<binary> --axes --budget` | `--note` |
 | `stuck` | `<binary> --at --tried --escalate` | 有 open anomaly 时 `--ack "A1,A3"` 必填 |
 | `status` / `render` | `<binary>` | — |
 
@@ -69,6 +72,21 @@ python "$LEDGER" anomaly <binary> --region 0x140003000-0x140003040 \
 python "$LEDGER" resolve <binary> --anomaly A1 --note "read_views 重读，第一次是渲染错位" \
   --evidence "read-bytes 0x140003010 16 -> 89 50 46，与反汇编一致"
 python "$LEDGER" resolve <binary> --anomaly A2 --waive "需要 trace 工具，本机未装"
+
+# 假设落账（铁律 4 的假设对象）：text=假设 H，--if-true/--if-false 回答
+# 「若为真/若为假下一步分别做什么」，--test 给出可复现的判定命令
+python "$LEDGER" hypothesis <binary> \
+  --text "FUN_13d74 第一参数是输出缓冲区" \
+  --if-true "继续按输出模型求逆" --if-false "改按文件缓冲区重建模型" \
+  --test "oracle_family.py chall --stub 0x13d74=0x0 --stub 0x13d74=0xff"
+# 关闭假设：confirmed（证实）/ killed（证伪）都必须给 --evidence
+# （判定命令的实际输出），叙述不是证据，缺证据 exit 2——与 resolve 反向门同构
+python "$LEDGER" hypothesis <binary> --resolve-id H1 --status killed \
+  --evidence "oracle_family: stub 0x0/0xff 输出均变 => 该因子参与计算，原假设证伪"
+
+# 枚举计划落账（铁律 13）：轴矩阵+候选预算开跑前先落账，禁止只写在聊天里
+python "$LEDGER" plan <binary> --axes "charset(95) x order(2) x pack(3)" \
+  --budget 570 --note "pack 轴若恒 identity 需复核"
 
 # 总览（新会话接手旧样本的第一件事）/ 手动重建 md
 python "$LEDGER" status <binary>

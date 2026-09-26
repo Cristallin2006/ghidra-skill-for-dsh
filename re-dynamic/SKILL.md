@@ -18,6 +18,8 @@ ORACLE="$HOME/.dsh/skills/re-dynamic/scripts/oracle.py"
 # rootfs /root/qiling-rootfs，均已装）
 # re-tools venv：Windows ~/Desktop/src/re-tools-venv/Scripts/python.exe；Linux ~/re-tools-venv/bin/python
 # win_gui_drive.py 为 Windows-only；frida_time_hook.py 双平台
+# 跨架构（WSL 已装）：qemu-riscv64 / qemu-aarch64（qemu-user 直接跑 foreign-arch ELF）、
+#   gdb-multiarch（target remote :1234 配 qemu -g）；binutils 手读只核对单点，整份反编译走 Ghidra
 ```
 
 ## 1. 直接运行（第一选择，最便宜）
@@ -25,7 +27,11 @@ ORACLE="$HOME/.dsh/skills/re-dynamic/scripts/oracle.py"
 ```bash
 wsl -d Ubuntu -- /mnt/c/.../sample          # ELF（含加壳判断后的产物）
 ./sample.exe                                 # PE 本机直接跑
+qemu-riscv64 /path/to/chall                  # foreign-arch ELF（readelf -h 确认 e_machine 后）
+qemu-riscv64 -g 1234 /path/to/chall &        # 配 gdb-multiarch：target remote :1234
 ```
+
+**跨架构铁则**：foreign-arch ELF（riscv64/aarch64/mips…）**先 import 进 Ghidra 用对应 processor 反编译**，objdump 只用于核对单点——"参数角色靠调用约定手读 asm 推断"是错模型的典型来源（DEFCON26 复盘 R1）。跨架构题常带 host/协议层多方件，记账用 `ledger.py conclude --locus proto:/channel:` 前缀（非地址型，铁律 7）。
 
 来源不明/疑似恶意的样本先评估再跑（快照 VM 更佳）；程序等输入就给输入，看输出猜结构。**观察到的每一个行为事实都用 ghidra-core `scripts/ledger.py observe` 回写台账**（机制见 ghidra-core references/evidence-ledger.md）。
 
@@ -69,7 +75,7 @@ dump 表达式：`reg+/-0xoff:len`（寄存器相对）、`0x地址:len`（Ghidr
 ② **gdb + pwndbg**（WSL 已装）：断点单步、内存断点；`wsl -d Ubuntu -- gdb /mnt/c/.../sample`
 ③ **angr**（re-tools-venv 已装）：符号执行求输入——"什么输入能让 check 返回 1"的直接求法，路径爆炸时慎用
 
-## 3.5 两个高价值套路（五题复盘实战）
+## 3.5 三个高价值套路（五题复盘实战）
 
 **① 外部随机/时间源是输入，不是逻辑**：校验依赖 `time()`/随机数/环境时，先判它是"输入"还是"逻辑"。是输入 → **合法地构造/覆写它**，把概率型 oracle 变成确定性 oracle——且不需要 patch 任何字节，天然满足铁律 10 的验证独立性（复盘实例：snake.exe 的 4 个关键格子由 `time.time()` 播种，命中概率 1/40320；枚举 FILETIME 后 frida hook `GetSystemTimeAsFileTime` 覆写返回值，未修改的二进制自己打印 flag）。覆写模板：`scripts/frida_time_hook.py`（Windows `GetSystemTimeAsFileTime` / Linux `time`/`gettimeofday` / Java `System.currentTimeMillis`）。
 
@@ -78,6 +84,8 @@ dump 表达式：`reg+/-0xoff:len`（寄存器相对）、`0x地址:len`（Ghidr
 - **高频连点回 `SendMessageA`**：`PostMessage` 队列约 10000 条后静默丢弃（实测发 19999 次只到 12205 次）
 
 组合记忆：**打开用 Post、连点用 Send**。驱动脚本：`scripts/win_gui_drive.py`。
+
+**③ 打桩 oracle 家族（单因子隔离）**：任一因子（函数返回值/随机源/配置字）是否参与计算存疑时，不要继续读码——把它打桩成常量看输出变不变。工具：ghidra-core `scripts/oracle_family.py`，binary + `--stub 0xaddr=0xval`（同地址多个值 = 一个家族）批量产 patched 副本（x86-64 函数头写 `mov eax,imm32;ret`）逐个运行出差分表：**输出变 ⇒ 该因子参与计算；任意常量下都不变 ⇒ 无关通道，立即停止在它上面读码**。这是推翻"参数角色读反"类错模型的决定性实验（DEFCON26 复盘 R1：`FUN_13d74` 角色被读反，错模型持有数小时；打桩实验几分钟即证伪）。落账按 `--source runtime-oracle`；注意这是 patch 态运行，只回答"参不参与"，验证数据模型仍须未修改进程 + 独立来源（§4①）。
 
 ## 4. 验证可信度（铁律 10 细则，encode 复盘 E2/E3）
 
