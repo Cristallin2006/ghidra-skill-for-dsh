@@ -39,3 +39,5 @@
 | `model_diff.py` | 玩具对（**命令形式必须是 `python3 x.py`，裸路径会被当命令 → exit 3**）：oracle=正确实现 stdin→stdout 恒等，model=真 16 位半字交换（`d[2:4]+d[0:2]`）/ chal 形状（低 16 位原样、高 16 位 ^0x1234）/ 逐字节 nibble 交换 | 16 位交换判「高低半块交换（按 4 字节块）」、chal 形状判「低半块全对+高半块 XOR 恒定」、nibble 交换判「高低半字节交换」，判词均为疑似接口错且 exit 2（宽度级规律永不落"疑似算法错"）；恒等对 exit 0；不存在命令 exit 3 |
 | `oracle_family.py` | 玩具 C（`factor` 参与计算 + `noise` 无关，gcc -O0 -no-pie）+ `--stub addr=0x0/0xff` | factor 两个值均判「变 → 参与计算」、noise 均判「不变 → 无关通道」exit 0；非 x86-64 / imm32 溢出（不加 `--rax`）exit 3 |
 | `ssa_trace.py` | 玩具模块（`key=random.getrandbits(8); acc=(key^0x2a)*3&0xff`）+ `--class/--ctor-input 'A*8' --observe-builtins sum --seed 1 --out t.json` | 事件链含 `RNG:getrandbits→^→*&` 且 `&` 事件值 == 手算 `((k^0x2a)*3)&0xff`；`BLK:sum` 命中；`result.acc` 为 `名=值` 形式；exit 0 |
+| `ssa_reconstruct.py` | 上一条的 t.json → `--out recon.txt --lits l.json` | 直线程序含 `(k1) ^ (42)` 形行与 `sum(...)` 调用行；字面量报告打印且 exit 0；坏 trace 路径 exit 2 |
+| `peel_inverse.py` | 滞后-2 掩码链玩具（`m_i = (m_{i-2} + m_{i-1}*3) & 0xffffffff` ×6）经 ssa_trace→ssa_reconstruct 的 recon.txt | 检出「滞后-2 递推段 (6 项)」并印逐层反解提示，exit 0；无结构输入印放行 z3 文案，exit 0；缺文件 exit 2 |

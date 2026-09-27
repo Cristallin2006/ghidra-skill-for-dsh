@@ -219,6 +219,8 @@ export JAVA_HOME="C:/Java"
 | `model_diff.py` ◈ | **铁律 10② 分歧指纹产出**：模型实现 vs 真实 oracle 命令随机对拍 N 组（`--input-gen hex:N/dec/ascii:N`，确定性 `--seed`），首个分歧给 hex 对照 + 指纹分类 + mismatch 率汇总。判词优先级**宽度级 > 字节级 > 无规律**：宽度级（按 2/4 字节块）高低半块交换 / 低半块全对+高半块 XOR·加法恒定（chal 形状）/ 单侧半块恒为常量；字节级低 nibble 全对 / nibble 交换 / 单常量差 / 全体偏移固定值 —— 以上全部判疑似接口/搬运错，宽度级命中**绝不**落"疑似算法错"；仅"完全无关"判疑似算法错。exit 0 全一致 / 2 有分歧 / 3 命令错误。纯本地子进程工具，不经 daemon |
 | `oracle_family.py` ◈ | **铁律 14 打桩 oracle 家族（单因子隔离）**：binary + `--stub 0xaddr=0xval`（可重复）批量产 patched 副本（x86-64 函数头写 `mov eax,imm32;ret`，`--rax` 用 imm64 形式）逐个运行出差分表：输出变 ⇒ 该因子参与计算；任意常量不变 ⇒ 无关通道。`--addr-is va`（默认，ELF 按 program header、PE 按节表+ImageBase 换算，可用 `--dry-run` 只验换算不 patch）/offset；非 x86-64 exit 3；exit 0 全部跑完 / 2 有副本运行失败 / 3 用法/架构错误 |
 | `ssa_trace.py` ◈ | **Cython/CPython 扩展 SSA 数据流追踪器**（ctf-patterns §12.2 工具形态）：int 子类包裹（`+ - * ^ & | << >> % //` 自动落账成事件流）+ import 前 builtins 记录包装（`--observe-builtins`）+ `random.*`/`os.urandom` 钩子（`--pin-urandom`/`--seed` 做 §9 角色判别）；`--class CLS --ctor-input 'A*48' --wrap m1,m2 --out trace.json`。exit 0 正常 / 2 用法错 / 3 加载失败。stdlib only，不经 daemon（Reverse-chal 复盘分水岭：8 min 拿 ARX 递推结构，替代手读生成 C） |
+| `ssa_reconstruct.py` ◈ | **SSA 事件流→直线程序重建 + 裸字面量解析**（§12.2 后半链，吃 ssa_trace 的 trace.json）：产出可读直线程序（行格式与 peel_inverse 输入约定一致），高频裸字面量用 identity/sw/sw<<16/位移/*16 + `sw(a)<<16|sw(b)` 打包四式逐一试解，解不出标 ?? 交人工不猜——Cython 值 C 化断链处"神奇常数"的归位器。exit 0 正常 / 2 输入错。stdlib only，不经 daemon |
+| `peel_inverse.py` ◈ | **铁律 6 工具形态：求逆前先查依赖图**（吃 ssa_reconstruct 的直线程序）：找 `& 0xffffffff` 掩码变量的依赖结构，检出"滞后-2 递推段"（mask_i 只依赖前两个）→ 从段末两个已知掩码逐层反解，无需 z3/SMT；无干净结构才放行 SMT。exit 0 判定完成 / 2 输入错。stdlib only，不经 daemon |
 
 ### 第 3 层：legacy（冻结备查，被 rpc 取代）
 

@@ -60,6 +60,9 @@ WSL 侧路径改为 `/root/.dsh/hooks/...`，hooks.json 里命令的 `python` �
   `python3 已落盘脚本.py` 的**运行**有意不计（正常 write-run-debug 循环误伤面太大，
   脚本积累由 churn 判定核管）。若确认载体在识别集内仍不计数，查 hook stderr 的
   `gate_explore hook warning`（异常即放行）与 hooks.json 挂载顺序
+- **被 hook exit 2 拦住时，第一步是读 hook 源码**（`~/.dsh/hooks/gate_*.py`，放行条件
+  都写在里头），不是换目录/改名绕过——858e13b3 session 在此烧掉 ~25 次调用，且换目录
+  = 样本路径变 = 台账断链，反而触发更多拦截
 - hook 脚本自身异常一律放行（exit 0），不会阻塞正常工作
 
 ## 设计边界

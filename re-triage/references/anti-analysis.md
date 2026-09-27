@@ -12,6 +12,16 @@ NtSetInformationThread  rdtsc  cpuid  GetTickCount  QueryPerformanceCounter
 
 `triage` 命令（ghidra-core §5）的 `suspicious_imports.anti_debug` 已覆盖 Windows 侧主项。
 
+## 1.5 「疑似反调试」必须先证伪（误判 = 路线自杀）
+
+看到像陷阱的字面量/分支（`"Don't hook!!!"` 这类字符串、可疑的恒假比较）就宣布
+"anti-tamper 设计"并放弃插桩，等于把唯一能看穿内部的工具亲手扔掉（858e13b3：
+`_p3` 的固定实参与 `_tips` 的初值本来就长那样——是设计常量，不是反调试）。
+
+证伪纪律：判某字面量/分支是陷阱之前，必须做**无插桩基线对照**——不挂任何 hook 跑一遍，
+该值/该分支仍在 ⇒ 程序固有逻辑，不是冲你来的。「挂上 hook 后行为变了」不构成陷阱证据
+（hook 本身就改变行为）。基线对照做不了 ⇒ 不许下"有反调试"结论（铁律 10④ 否定性结论门槛）。
+
 ## 2. Check → Bypass 对照表
 
 | 检测手段 | 识别特征 | 绕过 |
