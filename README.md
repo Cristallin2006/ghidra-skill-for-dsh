@@ -57,7 +57,7 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 ## 设计要点
 
 - **常驻 daemon**：JVM 只起一次，温热后每条命令亚秒级；长任务（load / version-track）走后台 + `@out` 落盘
-- **机械闸门，不靠自觉**：14 条铁律的执行载体是脚本——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、`resolve` 缺证据 exit 2 的反向门、hypothesis/plan 落账、churn 覆盖度信号）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
+- **机械闸门，不靠自觉**：14 条铁律的执行载体是脚本——`ledger.py`（同区回访强制 `--delta`、结论写入即锁定、`resolve` 缺证据 exit 2 的反向门、hypothesis/plan 落账、`--kind model` 结论强制 `--anchor` L2 左逆锚定实测、hypothesis 三态闭环 confirmed/killed/waived）、`read_views.py`（渲染文本 vs 真实字节对照）、`crypto_sanity.py`（求逆前后合法性检查），违规一律 exit 2
 - **判定性实验优先**：参数角色/因子参与度不靠调用约定猜——`oracle_family.py` 打桩隔离单因子（基线无输出自动抑制因果判词）、`model_diff.py` 模型对拍输出分歧指纹（宽度级 16/32 位半块规律 + 字节级 nibble 规律 ⇒ 接口错不是算法错；宽度级命中绝不落"疑似算法错"）
 - **验证独立性**：结论强制独立来源，无则标 ⚠UNVERIFIED——Google P0 Naptime 的 Perfect Verification 原则
 - **能力边界**：动态调试外包 Frida/GDB/Qiling/angr；协作式项目不做（ghidra-core/SKILL.md §8）
@@ -66,9 +66,10 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 
 catalog 只注入 skill 的 description，SKILL.md 正文和铁律不在上下文里——"AI 不遵守 skill 准则"多源于此。`dsh-hooks/` 用 dsh 内置的 hooks-claude-code 桥把关键纪律变成机械门：
 
-- **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（不依赖 agent 自觉读 SKILL.md）
-- **PreToolUse（Pwsh|Bash）**：对**无台账样本**的分析类直读（xxd/strings/objdump…）exit 2 阻断并给出流程指引；建台账后放行；pcap 修头等合法开局已豁免
-- **Stop 收尾检查**（stop_check.py）：默认停用，机制见 `dsh-hooks/README.md`
+- **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（9 条，不依赖 agent 自觉读 SKILL.md）
+- **PreToolUse（Pwsh|Bash）**：`gate_sample.py` 对**无台账样本**的分析类直读（xxd/strings/objdump…）exit 2 阻断并给出流程指引（建台账后放行，pcap 修头等合法开局已豁免）；`gate_explore.py` 熔断 heredoc/cat 落盘式探索——angr 禁项（无帧槽位/仿真证据不许上符号执行）、Cython 前置、变体枚举熔断（直指 model_diff.py）、30min ≥25 次探索且零 stuck 强制落账；`gate_longrun.py` 长任务强制落盘
+- **PreToolUse（Write）**：`gate_churn.py` 拟合熔断——目录 24h ≥8 个 .py 且活跃台账零 stuck → 逼 stuck 落账或升级 z3/emulate
+- **Stop**：`stop_check.py` 收尾核对（默认启用，会话归属判定）——本会话台账有 observe 无下文 / flag 结论缺 program_accept / 存在 open hypothesis → deny 强制核对
 
 安装：`dsh-hooks/` 拷到 `~/.dsh/hooks/`，在 profile 的 `cordis.patch.yml` 插入 hooks-claude-code 挂载条目（完整 YAML 与排障回滚见 `dsh-hooks/README.md`）。改动需**重启 dsh 服务 + 新开会话**生效。
 
