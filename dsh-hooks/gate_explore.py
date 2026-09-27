@@ -11,6 +11,9 @@ matcher "Pwsh|pwsh|Bash|bash"。f862c151 session 事故：97 次 heredoc 探索�
      证据（frame_map|emulate|gdb|帧槽|插桩）-> 给升级阶梯，禁止跳档
   B. Cython 前置：命令作用于 python_ext=true 的样本（读 <样本>.triage.json），
      且台账无 const_scan/frame_map 证据 -> 先跑 §12 元数据 + 帧槽位再建模
+  B2. cat/tee 落盘 churn：cat > x.py <<EOF / tee x.py 写脚本，目标目录近 24h
+     .py >= 8 且活跃台账零 stuck -> 与 gate_churn 同一判定核（bash 载体，
+     92a0a107：19 次 cat<<EOF 落盘 16 个 gdb 脚本完全绕开 Write 侧）
   C. 变体枚举：本次为探索性运行，其脚本体与滑窗内 >=2 次历史脚本体相似
      （difflib ratio > 0.7，"同一思路换措辞"的指纹），且台账条目数自最早
      相似运行起未增长 -> 直指 model_diff.py 分歧指纹分类
@@ -58,6 +61,15 @@ CYTHON_EVIDENCE = re.compile(r"const_scan|frame_map")
 ALLOW = re.compile(
     r"ledger\.py|doctor\.py|rpc_driver\.py|driver\.py|/scripts/|"
     r"\\scripts\\|guarded_run\.py")
+
+# cat-heredoc / tee 落盘 .py（92a0a107：19 次 cat > out/*.py <<EOF 落盘 16 个
+# gdb 辅助脚本，完全绕开 Write 侧的 gate_churn——载体盲区二号）。判定核与
+# gate_churn 相同：目标目录近 24h .py 堆积 + 活跃台账零 stuck -> 熔断。
+CAT_WRITE = re.compile(r"(?:cat\s*(?:>>|>)\s*|tee\s+)(\S*?\.py)\b")
+CHURN_LIMIT = 8
+CHURN_RECENT_SEC = 24 * 3600
+EXEMPT_PARTS = {".dsh", ".git", "node_modules", "site-packages",
+                "__pycache__", ".venv", "venv"}
 
 PY = re.compile(r"\bpython[0-9.]*(?:\.exe)?\b")
 HEREDOC = re.compile(
@@ -246,6 +258,7 @@ def main() -> int:
 
     ledgers = active_ledgers()
     ltext = ledger_text(ledgers)
+    now0 = time.time()
 
     # A. angr 禁项：未走完便宜档位不许上符号执行
     if ANGR.search(cmd) and not FRAME_EVIDENCE.search(ltext):
@@ -279,6 +292,37 @@ def main() -> int:
             "<函数地址>（栈帧槽位归属——伪码 local_XXXX 命名不可信）\n"
             "两者落账（observe）后本门放行。"
         )
+
+    # B2. cat/tee 落盘 .py 的 churn 熔断（与 gate_churn 同一判定核，bash 载体）
+    m = CAT_WRITE.search(cmd)
+    if m and not ALLOW.search(cmd):
+        target = Path(m.group(1).strip("\"'"))
+        if not target.is_absolute():
+            target = cwd / target
+        parts = {p.lower() for p in target.parts}
+        if not (parts & EXEMPT_PARTS):
+            parent = target.parent
+            try:
+                recent_py = [f for f in parent.glob("*.py")
+                             if f.is_file()
+                             and now0 - f.stat().st_mtime <= CHURN_RECENT_SEC] \
+                    if parent.is_dir() else []
+            except OSError:
+                recent_py = []
+            if len(recent_py) >= CHURN_LIMIT and ledgers \
+                    and ledger_stucks(ltext) == 0:
+                return block(
+                    f"[gate_explore · 铁律6 拟合熔断] 目录 {parent} 近 24h 已有 "
+                    f"{len(recent_py)} 个 .py 脚本（本次经 cat/tee 落盘，"
+                    "绕开 Write 侧 gate_churn 的载体盲区二号——92a0a107："
+                    "19 次 cat<<EOF 落盘 16 个 gdb 辅助脚本），"
+                    "且活跃台账 stuck 条目为 0。\n"
+                    "继续写脚本前先做其一：\n"
+                    "  ① python ~/.dsh/skills/ghidra-core/scripts/ledger.py stuck "
+                    "<样本> --at <卡点> --tried <已试路径> --escalate <升级去向>\n"
+                    "  ② 拟合/接线连错 2 次的强制升级：model_diff.py 分歧指纹 / "
+                    "z3 求解 / emulate-function 仿真取数"
+                )
 
     # C/D 只针对探索性运行
     body = exploration_body(cmd)

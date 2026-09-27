@@ -27,7 +27,8 @@ CARD = """\
 5. 枚举类解码先出轴矩阵+候选预算；无 oracle（hash/一致性/校验位）不跑全交叉。
 6. 卡住先 ledger.py stuck（有 open anomaly 须 --ack 或 resolve --waive）再升级工具层级，禁止换措辞重试同一路径；拟合/接线连错 2 次 → 强制升级 z3/SMT 或 emulate_blob/emulate-function，禁止写第 3 个手写拟合脚本。
 7. flag 的唯一合法验证 = 未修改的原程序/平台接受候选输入；自写探针的等价式不是程序判定。flag 结论必须 ledger.py conclude --kind flag --program-accept "投喂命令+成功响应"（缺证据 exit 2）。
-8. timeout ≥300s 的长任务必须走 guarded_run.py（tee 落盘+无缓冲+杀前保全）；裸 `timeout N python3 x.py > log` 会因块缓冲+SIGTERM 丢光部分结果。"""
+8. timeout ≥300s 的长任务必须走 guarded_run.py（tee 落盘+无缓冲+杀前保全）；裸 `timeout N python3 x.py > log` 会因块缓冲+SIGTERM 丢光部分结果。
+9. 中断/恢复后第一动作 = 清掉上轮最后一个 open hypothesis（ledger.py hypothesis --resolve-id --status confirmed|killed --evidence，客观不可检验走 waived --waive），再写报告。宣布「模型/反演已闭合」必须 conclude --kind model --anchor "L2 左逆锚定实测"：inv(fwd(已知答案))==已知答案；fwd(inv(B))==B 恒真，零信息量，不算验证。手上有已知答案（如 'A'*L 的 trace）就必须拿它当锚。"""
 
 
 def main() -> int:

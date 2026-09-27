@@ -18,13 +18,15 @@ Commands:
   observe  <binary> --region R --tool T --note N [--delta D]
   conclude <binary> --conclusion C --address A --evidence E \
            --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn] \
-           [--kind finding|flag] [--program-accept P]
+           [--kind finding|flag|model] [--program-accept P] [--anchor A]
            （非地址型题目用 --locus region:/channel:/proto: 前缀代替 --address；
-           --kind flag 必须 --program-accept 且禁止 --source self-script）
+           --kind flag 必须 --program-accept 且禁止 --source self-script；
+           --kind model 必须 --anchor "L2 左逆锚定：inv(fwd(已知答案))==已知答案
+           的实测输出"——fwd(inv(B))==B 恒真，不算验证）
   anomaly  <binary> --region R --note N --consequence C
   resolve  <binary> --anomaly ID (--note N --evidence E | --waive W)
   hypothesis <binary> --text H --if-true P --if-false Q --test "<cmd>" [--id K]
-  hypothesis <binary> --resolve-id K --status confirmed|killed --evidence E
+  hypothesis <binary> --resolve-id K (--status confirmed|killed --evidence E | --status waived --waive W)
   plan     <binary> --axes "charset(95) x order(2)" --budget 570 [--note N]
   stuck    <binary> --at R --tried "A,B" --escalate TARGET [--ack "A1,A3"]
   status   <binary>
@@ -422,6 +424,25 @@ def cmd_conclude(args) -> int:
                              ensure_ascii=False))
             return 2
 
+    # 铁律 10⑥ 硬门（f862c151/92a0a107 双会话临门一脚事故：用恒真自检
+    # fwd(inv(B))==B 确认了一个错的方程——任何逆函数实现都构造性满足它，
+    # 零信息量）。宣布「模型/反演已闭合」的结论必须附 L2 左逆锚定证据：
+    # inv(fwd(X_known))==X_known，其中 X_known 是已知的真实答案
+    # （如 'A'*L 采样的 trace——反演结果前 L 字节必须是 0x41）。
+    anchor = _resolve(getattr(args, "anchor", None),
+                      getattr(args, "anchor_file", None), "anchor")
+    if kind == "model":
+        if not anchor:
+            print(json.dumps({"ok": False,
+                              "error": "--kind model（模型/反演闭合声明）必须加 "
+                                       "--anchor \"L2 左逆锚定的实测输出\"："
+                                       "inv(fwd(X_known))==X_known，X_known 取已知"
+                                       "真实答案（长文本走 --anchor-file）。"
+                                       "fwd(inv(B))==B 恒真，是 L1 零信息量自检，"
+                                       "不能当锚；自检分级见铁律 10⑥"},
+                             ensure_ascii=False))
+            return 2
+
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
              "id": cid, "conclusion": conclusion,
              "address": (args.address or "").strip(), "region": locus,
@@ -431,6 +452,8 @@ def cmd_conclude(args) -> int:
         entry["kind"] = kind
     if program_accept:
         entry["program_accept"] = program_accept
+    if anchor:
+        entry["anchor"] = anchor
     if args.harness:
         entry["harness"] = args.harness.strip()
     if quote:
@@ -524,14 +547,16 @@ def cmd_hypothesis(args) -> int:
     entries = load_entries(jsonl)
     if args.resolve_id:
         # 关闭模式：与 resolve 反向门同构——confirmed/killed 都必须给可检验证据，
-        # 叙述不是证据，缺 evidence exit 2。
+        # 叙述不是证据，缺 evidence exit 2。waived 通道（客观不可检验/已被后续
+        # 结论取代）豁免 evidence，但豁免理由强制入账，waived 在 render 单列可见。
         hid = str(args.resolve_id).strip()
         if not args.status:
             print(json.dumps({"ok": False,
                               "error": "--resolve-id 关闭假设时必须给 "
-                                       "--status confirmed|killed"},
+                                       "--status confirmed|killed|waived"},
                              ensure_ascii=False))
             return 1
+        waive = (getattr(args, "waive", None) or "").strip()
         evidence = (args.evidence or "").strip()
         if args.evidence_file:
             p = Path(args.evidence_file)
@@ -541,11 +566,20 @@ def cmd_hypothesis(args) -> int:
                                  ensure_ascii=False))
                 return 1
             evidence = p.read_text(encoding="utf-8").strip()
-        if not evidence:
+        if args.status == "waived":
+            if not waive:
+                print(json.dumps({"ok": False,
+                                  "error": "--status waived 必须给 --waive "
+                                           "\"为何豁免\"（豁免理由强制入账）"},
+                                 ensure_ascii=False))
+                return 2
+            evidence = "waive: " + waive
+        elif not evidence:
             print("[反向门 · 铁律4] hypothesis 关闭（confirmed/killed）必须给可检验证据"
                   "（检验命令的实际输出/读数），叙述不是证据——")
             print("  重新执行并加: --evidence \"跑 --test 命令的关键输出\""
-                  "（长文本走 --evidence-file）")
+                  "（长文本走 --evidence-file）；客观不可检验才走 "
+                  "--status waived --waive \"为何豁免\"")
             return 2
         target = next((e for e in entries if e.get("type") == "hypothesis"
                        and str(e.get("id")) == hid), None)
@@ -727,6 +761,13 @@ def render(binary: Path) -> Path:
                                   + e["program_accept"].replace(chr(10), ' ⏎ '))
             else:
                 concl = "⚠缺程序接受证据 " + concl
+        if e.get("kind") == "model":
+            concl = "⚓ " + concl
+            if e.get("anchor"):
+                evidence_cell += (" ｜左逆锚定: "
+                                  + e["anchor"].replace(chr(10), ' ⏎ '))
+            else:
+                concl = "⚠缺左逆锚定 " + concl
         if indep == "no":
             concl = "⚠UNVERIFIED " + concl
         lines.append(f"| {cid} | {concl} | {e.get('address') or e.get('region', '—')} | {evidence_cell} "
@@ -801,7 +842,7 @@ _SCHEMA = {
                  {"source": {"read_views", "self-script", "decompiler-render",
                              "runtime-gdb", "runtime-oracle", "manual"},
                   "independent": {"yes", "no"},
-                  "kind": {"finding", "flag"}}),
+                  "kind": {"finding", "flag", "model"}}),
     "anomaly": ({"type", "id", "status", "ts", "sha16", "region", "note",
                  "consequence"}, {"status": {"open"}}),
     "anomaly-resolve": ({"type", "anomaly_id", "status", "note", "ts"},
@@ -809,7 +850,7 @@ _SCHEMA = {
     "hypothesis": ({"type", "id", "status", "ts", "sha16", "text",
                     "if_true", "if_false", "test"}, {"status": {"open"}}),
     "hypothesis-resolve": ({"type", "hypothesis_id", "status", "evidence",
-                            "ts"}, {"status": {"confirmed", "killed"}}),
+                            "ts"}, {"status": {"confirmed", "killed", "waived"}}),
     "plan": ({"type", "ts", "sha16", "axes", "budget", "note"}, {}),
     "stuck": ({"type", "ts", "sha16", "at", "tried", "escalate"}, {}),
 }
@@ -894,13 +935,19 @@ def main() -> int:
     p.add_argument("--quote-file", help="quote 长文本走文件（UTF-8）")
     p.add_argument("--id", help="字符串/整数均可（C1、Q5-1…）；缺省 = 下一个空闲整数")
     p.add_argument("--overturn", action="store_true")
-    p.add_argument("--kind", choices=["finding", "flag"], default="finding",
+    p.add_argument("--kind", choices=["finding", "flag", "model"], default="finding",
                    help="flag=flag/答案类结论：必须配 --program-accept（铁律 10⑤ 硬门），"
-                        "且不允许 --source self-script")
+                        "且不允许 --source self-script；"
+                        "model=模型/反演闭合声明：必须配 --anchor（铁律 10⑥ 硬门："
+                        "L2 左逆锚定 inv(fwd(已知答案))==已知答案 的实测输出）")
     p.add_argument("--program-accept",
                    help="kind=flag 必填：未修改原程序/平台接受候选输入的实测记录"
                         "（投喂命令 + 成功响应原文）")
     p.add_argument("--program-accept-file", help="program-accept 长文本走文件（UTF-8）")
+    p.add_argument("--anchor",
+                   help="kind=model 必填：L2 左逆锚定证据（inv(fwd(X_known))==X_known "
+                        "的断言+实测输出）；fwd(inv(B))==B 恒真不算")
+    p.add_argument("--anchor-file", help="anchor 长文本走文件（UTF-8）")
     p.set_defaults(fn=cmd_conclude)
 
     p = sub.add_parser("anomaly", help="异常落账（铁律 12：不一致必须转成可检验假设，--consequence 必填）")
@@ -929,10 +976,11 @@ def main() -> int:
     p.add_argument("--test", help="判定命令（可复现）")
     p.add_argument("--id", help="缺省 = 下一个空闲 H<int>")
     p.add_argument("--resolve-id", help="关闭模式：要关闭的 hypothesis id（H1、H2…）")
-    p.add_argument("--status", choices=["confirmed", "killed"],
-                   help="关闭模式必填：证实 / 证伪")
-    p.add_argument("--evidence", help="关闭模式必填：检验命令的实际输出/读数（反向门）")
+    p.add_argument("--status", choices=["confirmed", "killed", "waived"],
+                   help="关闭模式必填：证实 / 证伪 / 豁免（客观不可检验或已被后续结论取代）")
+    p.add_argument("--evidence", help="confirmed/killed 必填：检验命令的实际输出/读数（反向门）")
     p.add_argument("--evidence-file", help="evidence 长文本走文件（UTF-8）")
+    p.add_argument("--waive", help="status=waived 必填：豁免理由（强制入账，render 单列可见）")
     p.set_defaults(fn=cmd_hypothesis)
 
     p = sub.add_parser("plan", help="枚举计划落账（铁律 13：轴矩阵+候选预算，禁止只写在聊天里）")

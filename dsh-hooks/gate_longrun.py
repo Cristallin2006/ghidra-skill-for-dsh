@@ -51,7 +51,7 @@ def main() -> int:
         "改用 guarded_run.py（tee 落盘 + 无缓冲转发 + 杀前保全 + 心跳）：\n"
         "  python3 ~/.dsh/skills/ghidra-core/scripts/guarded_run.py \\\n"
         "    --timeout 1200 --log out/job.log -- python3 -u x.py [args]\n"
-        "若确属一次性短探测（误伤）：把 timeout 降到 300 秒以内即不触发。"
+        "若确属一次性短探测（误伤）：把 timeout 降到 300 秒以下即不触发。"
     )
     print(msg, file=sys.stderr)
     return 2
