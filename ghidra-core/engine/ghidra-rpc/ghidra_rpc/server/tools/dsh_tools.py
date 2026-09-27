@@ -364,7 +364,9 @@ def _handle_triage(ctx, args: dict) -> dict:
                 if lo <= ea <= hi:
                     entry_in_last = True
                     break
-        hollow = any((not b.isInitialized()) and b.isWrite() for b in blocks)
+        hollow_names = [b.getName() for b in blocks
+                        if (not b.isInitialized()) and b.isWrite()]
+        hollow = bool(hollow_names)
         structural = []
         if total_imports < 10:
             structural.append(f"imports={total_imports}<10")
@@ -390,6 +392,21 @@ def _handle_triage(ctx, args: dict) -> dict:
                 else:
                     kept.append(sig)
             structural = kept
+
+        # ELF 正常布局：.bss 标准族本来就是未初始化可写块，任何带 .bss 的 ELF
+        # （含 Cython 扩展 .so）都命中 hollow 信号；.so 的 entry 又常落在最后
+        # exec block，两信号凑齐即误报 packed-unknown（Reverse-chal chal.so
+        # 复盘 §7）。全部未初始化可写块都是 .bss 标准族名时，把 hollow 信号
+        # 降级到 hints（UPX 块名是 UPX0/UPX1，不受影响）。
+        if "uninitialized-writable-block" in structural:
+            bss_family = {".bss", ".tbss", ".sbss", "common"}
+            if hollow_names and all(n.lower() in bss_family
+                                    for n in hollow_names):
+                structural.remove("uninitialized-writable-block")
+                fp_hints.append(
+                    "uninitialized-writable-block 命中，但全部未初始化可写块"
+                    "都是 .bss 标准族（" + ",".join(hollow_names) +
+                    "）——ELF 正常布局，疑似误报")
 
         if upx_signals:
             packer_verdict = "upx"

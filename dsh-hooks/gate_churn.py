@@ -100,7 +100,9 @@ def main() -> int:
         "  ① python ~/.dsh/skills/ghidra-core/scripts/ledger.py stuck <样本> "
         "--at <卡点> --tried <已试路径> --escalate <升级去向>\n"
         "  ② 拟合/接线连错 2 次的强制升级：z3/SMT 求解，或 "
-        "emulate_blob / emulate-function 仿真取数——禁止写第 3 个手写拟合脚本"
+        "emulate_blob / emulate-function 仿真取数——禁止写第 3 个手写拟合脚本。"
+        "升级前先查依赖图：存在可剥离递推/可逆算子时优先手工剥离"
+        "（Reverse-chal：掩码二阶递推逐层反解，z3 60s 超时反而没用上）"
     )
     print(msg, file=sys.stderr)
     return 2

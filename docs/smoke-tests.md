@@ -6,7 +6,7 @@
 
 | Skill | 输入场景 | 应触发 | 最小验证 |
 |---|---|---|---|
-| re-triage | 任意新样本到手 | `ensure` + `triage`，先记录 imports + 语言/壳判定再深挖（铁律 4） | triage JSON 含 `packer` 块与 `lang_hints` |
+| re-triage | 任意新样本到手 | `ensure` + `triage`，先记录 imports + 语言/壳判定再深挖（铁律 4） | triage JSON 含 `packer` 块与 `lang_hints`；仅 `.bss` 族未初始化块的 ELF 共享库不得判 `packed-unknown`（hollow 信号降级进 `false_positive_hints`） |
 | ghidra-core | 任何区域级分析 | `ledger.py observe` 落账；同区第二次 observe 被断路器拦（exit 2） | `ledger.py validate <bin>` exit 0 |
 | ghidra-static | 判型为普通 native、要读懂逻辑 | Recon→Analysis 流程；引用伪码结论前先 `decomp_lint.py --binary <bin>` 体检（尾调用甄别剔除良性误报） | fatal 函数清单非空时禁止读这些函数的伪码；尾调用类单列不算 fatal |
 | re-dynamic | 静态 15 分钟无关键路径 | 直接运行/oracle.py/Frida 入口；patch 态结论标 `--independent no` | oracle 有正例+负例成对（铁律 11） |
@@ -38,3 +38,4 @@
 | `emulate_blob.py` | 裸 blob + `--base/--entry/--rsp` | 停止原因分类输出；入口未映射判「entry-unmapped（harness 配置错）」exit 4；blob 不可读/空 blob/未知 `--reg` 也是 exit 4；unicorn 缺失时 exit 3 且提示进 re-tools-venv |
 | `model_diff.py` | 玩具对（**命令形式必须是 `python3 x.py`，裸路径会被当命令 → exit 3**）：oracle=正确实现 stdin→stdout 恒等，model=真 16 位半字交换（`d[2:4]+d[0:2]`）/ chal 形状（低 16 位原样、高 16 位 ^0x1234）/ 逐字节 nibble 交换 | 16 位交换判「高低半块交换（按 4 字节块）」、chal 形状判「低半块全对+高半块 XOR 恒定」、nibble 交换判「高低半字节交换」，判词均为疑似接口错且 exit 2（宽度级规律永不落"疑似算法错"）；恒等对 exit 0；不存在命令 exit 3 |
 | `oracle_family.py` | 玩具 C（`factor` 参与计算 + `noise` 无关，gcc -O0 -no-pie）+ `--stub addr=0x0/0xff` | factor 两个值均判「变 → 参与计算」、noise 均判「不变 → 无关通道」exit 0；非 x86-64 / imm32 溢出（不加 `--rax`）exit 3 |
+| `ssa_trace.py` | 玩具模块（`key=random.getrandbits(8); acc=(key^0x2a)*3&0xff`）+ `--class/--ctor-input 'A*8' --observe-builtins sum --seed 1 --out t.json` | 事件链含 `RNG:getrandbits→^→*&` 且 `&` 事件值 == 手算 `((k^0x2a)*3)&0xff`；`BLK:sum` 命中；`result.acc` 为 `名=值` 形式；exit 0 |

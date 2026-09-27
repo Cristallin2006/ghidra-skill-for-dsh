@@ -10,6 +10,8 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 经多轮真题复盘与第三方对抗审计持续硬化（happyVm / DEFCON26 quals 等）：伪码 fatal 误判基线 6.0% → 2.8%（尾调用甄别）；跳转表/栈帧/常量三类"手读 asm"高危动作全部脚本化；台账从 observe/conclude 扩展为 **observe / conclude / anomaly / hypothesis / plan / stuck** 六种对象，假设与枚举预算不再只活在聊天里。
 
+Cython 扩展题独立求解（2026-09-27，Reverse-chal：`chal.so` = Cython 3.0.10 CPython 扩展，IDEA 变体 + SM4 S 盒 + 随机掩码诱饵门）：不参考旧台账/WP，**55 分钟**从分诊到 flag 落盘，原程序正/负对照验证通过；途中 churn/longrun 两道机械闸门按设计拦截。复盘另定位 ~30 分钟可压缩流程损耗（SSA 追踪器前置等），同类题目标 20–25 分钟。
+
 ## 结构（1 底座 + 7 场景）
 
 | 目录 | 职责 |
