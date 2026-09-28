@@ -39,5 +39,15 @@
 | `model_diff.py` | 玩具对（**命令形式必须是 `python3 x.py`，裸路径会被当命令 → exit 3**）：oracle=正确实现 stdin→stdout 恒等，model=真 16 位半字交换（`d[2:4]+d[0:2]`）/ chal 形状（低 16 位原样、高 16 位 ^0x1234）/ 逐字节 nibble 交换 | 16 位交换判「高低半块交换（按 4 字节块）」、chal 形状判「低半块全对+高半块 XOR 恒定」、nibble 交换判「高低半字节交换」，判词均为疑似接口错且 exit 2（宽度级规律永不落"疑似算法错"）；恒等对 exit 0；不存在命令 exit 3 |
 | `oracle_family.py` | 玩具 C（`factor` 参与计算 + `noise` 无关，gcc -O0 -no-pie）+ `--stub addr=0x0/0xff` | factor 两个值均判「变 → 参与计算」、noise 均判「不变 → 无关通道」exit 0；非 x86-64 / imm32 溢出（不加 `--rax`）exit 3 |
 | `ssa_trace.py` | 玩具模块（`key=random.getrandbits(8); acc=(key^0x2a)*3&0xff`）+ `--class/--ctor-input 'A*8' --observe-builtins sum --seed 1 --out t.json` | 事件链含 `RNG:getrandbits→^→*&` 且 `&` 事件值 == 手算 `((k^0x2a)*3)&0xff`；`BLK:sum` 命中；`result.acc` 为 `名=值` 形式；exit 0 |
-| `ssa_reconstruct.py` | 上一条的 t.json → `--out recon.txt --lits l.json` | 直线程序含 `(k1) ^ (42)` 形行与 `sum(...)` 调用行；字面量报告打印且 exit 0；坏 trace 路径 exit 2 |
-| `peel_inverse.py` | 滞后-2 掩码链玩具（`m_i = (m_{i-2} + m_{i-1}*3) & 0xffffffff` ×6）经 ssa_trace→ssa_reconstruct 的 recon.txt | 检出「滞后-2 递推段 (6 项)」并印逐层反解提示，exit 0；无结构输入印放行 z3 文案，exit 0；缺文件 exit 2 |
+| `ssa_reconstruct.py` | 上一条的 t.json → `--out recon.txt --lits l.json` | 直线程序含 `(k1) ^ (42)` 形行与 `sum(...)` 调用行；字面量报告打印且 exit 0；**带 `--out` 时打印「下一步（铁律 6 闸）」+ peel_inverse.py 确切命令**；坏 trace 路径 exit 2 |
+| `peel_inverse.py` | 滞后-2 掩码链玩具（`m_i = (m_{i-2} + m_{i-1}*3) & 0xffffffff` ×6）经 ssa_trace→ssa_reconstruct 的 recon.txt | 检出「滞后-2 递推段 (6 项)」并印逐层反解提示，exit 0；无结构输入印放行 z3 文案，exit 0；缺文件 exit 2。**检出段时印「下一步（闸的输出是命令不是建议）」+ `--emit-solver` 确切命令；`--emit-solver s.py` 生成骨架后：未填 KNOWN 运行时指名缺哪两个段末掩码且 exit 2；填入段末两掩码正确值后反解出全部 6 项、前向验证通过、exit 0** |
+
+## 脚本级冒烟用例（traffic-analysis/scripts/）
+
+> 用 AegisTrace 样本（WSL `/root/src/aegis-work-fresh/samples/`，golden 值见 `docs/cases/aegis-composite-carrier.md`——判例存档在 skill 之外，勿链回 skill 内文件）。
+
+| 脚本 | 输入 | 最小验证 |
+|---|---|---|
+| `decode_engine.py` | aegis_telemetry.pcap + `--stream "10.77.3.41:49622->10.77.3.9:8443" --key-expr "(tsval>>8)&0xff" --fields pay.lo,tsval.n0,seq.n1 --ops xor --arity 3 --order perm:<rodata[0x32e0:0x3320]> --packing hi --oracle sha256:75c75a60…ff45146f`（**不做 tshark 预过滤**） | 自动剔除 3 个同键无载荷握手包并告警（71→68 包）；命中 `8f6419d4…e25577a1`，exit 0；`--keep-empty` 时保留污染（流 71 包，可 miss）——T-A2#1 回归 |
+| `conflict_oracle.py` | 同上 pcap + 同 stream/key-expr | 冲突集干净：仅 tsval/tsval.n0/pkt 在键 {5,12,31,45} 冲突（无 sport/dport/flags 假冲突）；打印「重生字段」冲突诊断；末尾恒输出 decode_engine 处方（排名不收敛时给「铺轴+oracle 过滤」窄字段池命令）；多流且未给 `--stream` 时 stderr 告警选流；`--keep-empty` 时假冲突原样可见 |
+| 边界：纯元数据信道 | 全无载荷的合成 pcap | 两个脚本都**不**剔除任何包（纯元数据信道不受污染防护影响） |

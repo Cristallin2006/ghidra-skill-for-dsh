@@ -25,10 +25,11 @@ CARD = """\
 3. 同区回访必须带 --delta（答"这次和上次差在哪"）；肉眼 hex 同区最多 2 次，第 3 次机械拒绝。
 4. 观测到不一致（重复键冲突/两次读数不同）必须 ledger.py anomaly --consequence 落账，禁止降级为"噪声/待枚举"。
 5. 枚举类解码先出轴矩阵+候选预算；无 oracle（hash/一致性/校验位）不跑全交叉。
-6. 卡住先 ledger.py stuck（有 open anomaly 须 --ack 或 resolve --waive）再升级工具层级，禁止换措辞重试同一路径；拟合/接线连错 2 次 → 强制升级 z3/SMT 或 emulate_blob/emulate-function，禁止写第 3 个手写拟合脚本；升级前先查依赖图——有可剥离递推/可逆算子时手工剥离优先。
+6. 卡住先 ledger.py stuck（有 open anomaly 须 --ack 或 resolve --waive）再升级工具层级，禁止换措辞重试同一路径；拟合/接线连错 2 次 → 强制升级 z3/SMT 或 emulate_blob/emulate-function，禁止写第 3 个手写拟合脚本；**手上有 ssa_reconstruct 直线程序时，任何求逆/SMT 之前 MUST 先跑 peel_inverse.py 查掩码依赖图**——检出可剥离递推段就逐层手工剥离，无干净结构才放行 SMT（跳过本闸直接 z3 实证丢 flag：be20d7dc，40 min 全 unknown）；**反向闸：peel 检出递推段后禁止直奔 z3/SMT**——下一步是 `peel_inverse.py <recon> --emit-solver peel_solve.py` 生成骨架、填 KNOWN/CALL_TABLES 逐层反解（检出后 0 次剥离直奔 z3 实证丢 flag：47246ce9，z3 模型连修 4 次未收敛，47 min 无 flag）；**z3/SMT 模型接线连错 2 次（unsat 无法解释/换输入不泛化/污点断链）→ 禁止修第 3 次模型，强制回到剥离路径或 ledger.py stuck 升级**。
 7. flag 的唯一合法验证 = 未修改的原程序/平台接受候选输入；自写探针的等价式不是程序判定。flag 结论必须 ledger.py conclude --kind flag --program-accept "投喂命令+成功响应"（缺证据 exit 2）。
 8. timeout ≥300s 的长任务必须走 guarded_run.py（tee 落盘+无缓冲+杀前保全）；裸 `timeout N python3 x.py > log` 会因块缓冲+SIGTERM 丢光部分结果。
-9. 中断/恢复后第一动作 = 清掉上轮最后一个 open hypothesis（ledger.py hypothesis --resolve-id --status confirmed|killed --evidence，客观不可检验走 waived --waive），再写报告。宣布「模型/反演已闭合」必须 conclude --kind model --anchor "L2 左逆锚定实测"：inv(fwd(已知答案))==已知答案；fwd(inv(B))==B 恒真，零信息量，不算验证。手上有已知答案（如 'A'*L 的 trace）就必须拿它当锚。"""
+9. 中断/恢复后第一动作 = 清掉上轮最后一个 open hypothesis（ledger.py hypothesis --resolve-id --status confirmed|killed --evidence，客观不可检验走 waived --waive），再写报告。宣布「模型/反演已闭合」必须 conclude --kind model --anchor "L2 左逆锚定实测"：inv(fwd(已知答案))==已知答案；fwd(inv(B))==B 恒真，零信息量，不算验证。手上有已知答案（如 'A'*L 的 trace）就必须拿它当锚。
+10. 工具输出的 advice/下一步处方（如 conflict_oracle 末尾的 decode_engine 命令）必须照抄执行，或 ledger.py --note 落账不执行的理由；无视处方转手搓脚本 = 违规（判例：decode_engine 零调用，>2e5 手搓候选全在缺轴空间，42 min 无 flag）。真复合不一定消除冲突——冲突排名不收敛时改走处方里的「铺轴 + oracle 过滤」；冲突字段是键的确定函数时，它是复合值的抵消项（纳入组合），不是"无信息"（禁止剔除）。"""
 
 
 def main() -> int:

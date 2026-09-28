@@ -80,7 +80,7 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 | FTP/Telnet/HTTP Basic/NTLM 认证流量 | `references/pcap-triage.md` §凭据 |
 | 协议分布全正常、内容全噪声 | 元数据直方图：`timing_decode.py --mode len` / `--mode byte --offset N`（TTL=IP+8，TOS=IP+1；**IPID 是 16 位大端，`--offset` 只读 1 字节 → 高字节 IP+4 恒为 0、低字节 IP+5**），方法论 `references/tunnels.md` §通用检测 |
 | 附件 = pcap + 二进制 | 先用 ghidra-core `unreferenced_data.py` 提取零引用材料清单（置换/替换/密钥表），再解 pcap |
-| 字段取值在重传/重复键上冲突 | 复合算子分支：`conflict_oracle.py`（不是噪声分支）→ 命中组合交 `decode_engine.py` + oracle 验证 |
+| 字段取值在重传/重复键上冲突 | 复合算子分支：`conflict_oracle.py`（不是噪声分支）→ **照抄其末尾 decode_engine 处方**执行；要点：确定函数=抵消项不是无信息；真复合不一定消除冲突（冲突由重生字段携带时真组合继承冲突，走处方的铺轴+oracle 过滤） |
 
 ### 4. 证据落账（强制）
 
@@ -95,8 +95,8 @@ python "$TA/pcap_triage.py" cap.pcap      # 零依赖：包数/时间跨度/协�
 | 脚本 | 一句话 |
 |---|---|
 | `scripts/pcap_triage.py` | 开局分诊（零依赖）；某协议占比 >60% exit 2 并给路由 hint；报告末尾附 top TCP 流字段一致性矩阵，重复键冲突打 ⚠ |
-| `scripts/conflict_oracle.py` | 重复逻辑键上字段冲突报告 + 消除冲突的 1~3 元 xor/add/sub 组合排名（假设生成器，非排除器） |
-| `scripts/decode_engine.py` | 字段×算子×顺序×打包多轴全交叉解码；无 --oracle（sha256/前缀/可打印）exit 2 拒绝开跑，超 --max-candidates 同样 exit 2 |
+| `scripts/conflict_oracle.py` | 重复逻辑键上字段冲突报告 + 消除冲突的 1~3 元 xor/add/sub 组合排名（假设生成器，非排除器）；自动剔同键无载荷握手包、退化组合（含逐包唯一宽字段）单列、重生字段冲突诊断、末尾输出可照抄的 decode_engine 处方 |
+| `scripts/decode_engine.py` | 字段×算子×顺序×打包多轴全交叉解码；无 --oracle（sha256/前缀/可打印）exit 2 拒绝开跑，超 --max-candidates 同样 exit 2；自动剔除与数据包同键的无载荷包（--keep-empty 关闭） |
 | `scripts/hid_keyboard.py` | usbhid.data hex 行 → 还原文本（内置完整 HID 键码表+Shift 映射，--lines 跟踪方向键分行） |
 | `scripts/mouse_render.py` | HID 鼠标/数位板位移 → 累加轨迹 → PGM 图（纯 stdlib；输出是 `<out>_mode<N>.pgm` 不是 `<out>.pgm`；`--png` 需 PIL——**venv 里没有 PIL、PATH 上的 python 3.10 才有**，缺了自动降级只出 PGM） |
 | `scripts/dnscat2_reassemble.py` | DNS 查询名列表 → 去 9 字节头/去重传 → 重组 payload（缺省只自动猜 **2 级**隧道域名；3 级以上必须显式 `--domain`，否则静默猜错成 `example.com`） |

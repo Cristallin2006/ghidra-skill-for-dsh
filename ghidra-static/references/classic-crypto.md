@@ -56,7 +56,7 @@ dec = base64.b64decode(ct.translate(str.maketrans(TABLE, STD)))
 4. **禁止带病推进**：crypto_sanity.py 前门关（常量长度合法性）exit 2 时，第一嫌疑人是读数错（跨缓冲区误读/渲染吞前导 0），回 read_views.py 重取数，禁止改模型硬凑。
 5. 全链路通了再宣布结论；每级「正向复现成功」落台账 ledger.py observe，最终逆出的 flag 落 ledger.py conclude。
 
-**AegisTrace 教训**：流水线里只要有一级是"看起来像标准算法但实际改过"（换表、改轮数、改 delta），整链求逆会在最后一级才爆炸——逐段验证把爆炸半径锁在单级内。
+**改表加密题教训**：流水线里只要有一级是"看起来像标准算法但实际改过"（换表、改轮数、改 delta），整链求逆会在最后一级才爆炸——逐段验证把爆炸半径锁在单级内。
 
 ## 5. 自定义置换 / S 盒定位
 
@@ -79,4 +79,4 @@ dec = base64.b64decode(ct.translate(str.maketrans(TABLE, STD)))
 
 ---
 
-借鉴声明：本篇纯自撰（素材来自家族 encode 题复盘与 AegisTrace 复盘），未复制任何外部许可源内容。
+借鉴声明：本篇纯自撰（素材来自家族 encode 题复盘与复合载体题复盘），未复制任何外部许可源内容。

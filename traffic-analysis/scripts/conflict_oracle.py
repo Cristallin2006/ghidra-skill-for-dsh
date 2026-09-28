@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """conflict_oracle.py - 重复键字段冲突预言机：哪些字段在重复逻辑键上取值冲突，哪些算子组合能消除冲突。
 
-用途（AegisTrace 复盘）：同一逻辑键（同下标/同 seq/重传）上某字段取值不一致
+用途：同一逻辑键（同下标/同 seq/重传）上某字段取值不一致
   ⇒ 该字段大概率不是明文本身，明文可能是 ≥2 字段的复合函数（xor/add/sub）。
 本脚本报告冲突、并搜索 1~3 元字段组合 × {xor,add,sub} 中"让所有重复键取值一致"的组合。
 
@@ -10,8 +10,15 @@
 
 用法：
   python conflict_oracle.py cap.pcap --key-expr "(tsval>>8)&0xff"
+  python conflict_oracle.py cap.pcap --stream "10.0.0.1:49622->10.0.0.9:8443" --key-expr "(tsval>>8)&0xff"
   python conflict_oracle.py cap.pcap --key ipid --fields tsval.n0,pay.lo,seq.n1
   python conflict_oracle.py cap.pcap --key-expr "seq" --json @out.json
+
+排名纪律（T-A1 修复）：
+  - 含"逐包唯一"宽字段（整 tsval/seq/ack/pkt 等，宽度≥16 且取值几乎每包不同）的组合
+    消除冲突是平凡结果——单列 degenerate 区，不参与主排名；
+  - 主排名按 消除数 desc、结果流熵 **desc**（真解是数据样高熵，低熵偏好会把真解压出 top）；
+  - 冲突字段是复合值的**抵消项**：正确动作是纳入 XOR/ADD 组合，禁止判为"无信息"剔除。
 
 出口码：0 正常；1 参数/输入错误。
 """
@@ -190,6 +197,30 @@ def parse_keys(packets, key_expr, key_field):
     return groups
 
 
+def drop_key_colliding_empty(packets, key_expr, key_field):
+    """剔除与数据包同键的无载荷包（握手/纯 ACK），返回 (kept, dropped)。
+
+    T-A2#1：SYN 之类无载荷包的 key（如 (tsval>>8)&0xff==0）会抢走数据包 key 的
+    "第一次出现"，既污染 decode_engine 的明文流，也污染 conflict_oracle 的冲突集
+    （实测：71 包混合流 key=0 含 3 握手包+1 数据包，~20 个字段被算成假冲突）。
+    仅当混合流（有载荷+无载荷共存）且发生同键碰撞时剔除；纯元数据信道（全流无载荷）不动。
+    """
+    with_pay = [p for p in packets if p["payload"]]
+    no_pay = [p for p in packets if not p["payload"]]
+    if not with_pay or not no_pay:
+        return packets, []
+    def kof(p):
+        if key_field:
+            return field_value(key_field, p)
+        return eval(key_expr, eval_namespace(p))  # noqa: S307 - 受限名字空间
+    pay_keys = {kof(p) for p in with_pay}
+    colliding = [p for p in no_pay if kof(p) in pay_keys]
+    if not colliding:
+        return packets, []
+    drop_ids = {id(p) for p in colliding}
+    return [p for p in packets if id(p) not in drop_ids], colliding
+
+
 def combine(op, values, width):
     mask = (1 << width) - 1
     if op == "xor":
@@ -220,6 +251,9 @@ def main():
     ap.add_argument("--key-expr", help='受限 eval 逻辑键表达式，如 "(tsval>>8)&0xff"（字段名点号写成 __，如 tsval__n0）')
     ap.add_argument("--key", help="单字段简写，如 seq / ipid / tsval")
     ap.add_argument("--fields", help="逗号分隔字段子集（缺省全量）：pay.hi pay.lo pay[i] tsval[.n0..7] seq[.n0..7] ack[.n0..7] sport dport ipid ttl win flags len pkt")
+    ap.add_argument("--stream", help='选流 "srcip:srcport->dstip:dstport"（缺省全量；多流时跨流键碰撞会污染冲突集，强烈建议选流）')
+    ap.add_argument("--keep-empty", action="store_true",
+                    help="保留与数据包同键的无载荷包（握手/纯 ACK）。缺省自动剔除并告警（T-A2#1）")
     ap.add_argument("--top", type=int, default=10, help="排名输出条数（默认 10）")
     ap.add_argument("--json", metavar="@out.json", help="完整结果写 JSON 文件")
     args = ap.parse_args()
@@ -230,6 +264,26 @@ def main():
     packets = list(iter_tcp(args.pcap))
     if not packets:
         raise SystemExit("[!] 未解析到任何 TCP 包")
+
+    # ---- 选流（T-A1#1：跨流键碰撞污染冲突集） ----
+    flows = {}
+    for p in packets:
+        a, b = f"{p['src']}:{p['sport']}", f"{p['dst']}:{p['dport']}"
+        flows.setdefault(tuple(sorted((a, b))), []).append(p)
+    if args.stream:
+        a, _, b = args.stream.partition("->")
+        fkey = tuple(sorted((a.strip(), b.strip())))
+        if fkey not in flows:
+            raise SystemExit(f"[!] 流 {args.stream} 不存在；现有流: "
+                             + ", ".join(f"{x}<->{y}({len(v)})" for (x, y), v in flows.items()))
+        packets = flows[fkey]
+        print(f"[i] 选流 {fkey[0]} <-> {fkey[1]}  包数 {len(packets)}")
+    elif len(flows) > 1:
+        print(f"[!] 检测到 {len(flows)} 条 TCP 流，跨流键碰撞会污染冲突集——建议 --stream 选流：",
+              file=sys.stderr)
+        for (x, y), v in sorted(flows.items(), key=lambda kv: -len(kv[1]))[:5]:
+            print(f"      {x}<->{y} ({len(v)} 包)", file=sys.stderr)
+
     no_ts = sum(1 for p in packets if p["tsval"] is None)
     if no_ts:
         print(f"[!] {no_ts}/{len(packets)} 个 TCP 包无 TS option，tsval 字段按 0 处理", file=sys.stderr)
@@ -243,6 +297,14 @@ def main():
                 raise SystemExit(f"[!] 未知字段: {f}")
     else:
         fields = list(STATIC_FIELDS)
+
+    if args.keep_empty:
+        dropped_empty = []
+    else:
+        packets, dropped_empty = drop_key_colliding_empty(packets, args.key_expr, args.key)
+    if dropped_empty:
+        print(f"[!] {len(dropped_empty)} 个无载荷包（握手/纯 ACK）与数据包同键——已剔除"
+              f"（防假冲突污染）；要保留用 --keep-empty")
 
     groups = parse_keys(packets, args.key_expr, args.key)
     dups = {k: v for k, v in groups.items() if len(v) >= 2}
@@ -271,17 +333,29 @@ def main():
     if conflicts:
         print("  ⇒ 这些字段大概率不是明文本身；明文可能是 ≥2 字段的复合函数")
         print("  ⇒ 注意：真实抓包中重传载荷可合法不同——冲突是假设生成器，不是排除器（key 设计是你的责任）")
+        # ---- 联动判定（T-A6 核心：确定函数 × 同键冲突 ⇒ XOR 抵消项） ----
+        print("\n-- 联动判定（确定函数 × 同键冲突） --")
+        for f in conflicts:
+            print(f"  {f}: 在 {len(conflicts[f])}/{len(dups)} 个重复键上冲突")
+        print("  ⇒ 冲突字段若在非重复键上是键的确定函数（可用简单式拟合），它不是'无信息'，")
+        print("    而是复合值的 XOR/ADD **抵消项**——必须纳入组合，禁止剔除。")
+        print("    （判例：某载荷低位字段被判为 pure f(k) 剔除后，>2e5 手搓候选全部不在解空间）")
 
     # ---- 算子组合排名 ----
     # 修复假设必须含 ≥1 个冲突字段：纯由一致字段组成的组合与"消除冲突"无关
     # （例如 tsval.n3 是 key 的纯函数，天然一致，但不是明文修复）。
     results = []
+    degenerate = []  # 含逐包唯一宽字段的组合：消除冲突是平凡结果，单列（T-A1#2）
     trivial = []  # 全流常量组合：平凡消除，单列
     if dups:
         pool = list(fields)
         if conflicts:
             conf_set = set(conflicts)
         vals_cache = {f: [field_value(f, p) for p in packets] for f in fields}
+        # 逐包唯一宽字段：宽度≥16 且 >90% 包取值互不相同（整 tsval/seq/ack/pkt 之类）
+        uniqueish = {f for f in fields
+                     if field_width(f) >= 16
+                     and len(set(vals_cache[f])) > 0.9 * len(packets)}
         for arity in (1, 2, 3):
             for combo in itertools.combinations(pool, arity):
                 if conflicts and not any(f in conf_set for f in combo):
@@ -296,22 +370,67 @@ def main():
                     if len(set(stream)) == 1:
                         trivial.append((op, combo))
                         continue
-                    results.append((solved, entropy(stream), op, combo))
+                    row = (solved, entropy(stream), op, combo)
+                    if any(f in uniqueish for f in combo):
+                        degenerate.append(row)
+                    else:
+                        results.append(row)
 
     note = "（只列含 ≥1 冲突字段的修复组合）" if conflicts else ""
-    print(f"\n-- 算子组合排名（消除重复键数 desc, 结果流熵 asc{note}；重复键共 {len(dups)} 个） --")
-    results.sort(key=lambda r: (-r[0], r[1]))
+    print(f"\n-- 算子组合排名（消除重复键数 desc, 结果流熵 desc{note}；重复键共 {len(dups)} 个） --")
+    # T-A1#3：真解是数据样高熵；低熵偏好会把真解压出 top——熵降序
+    results.sort(key=lambda r: (-r[0], -r[1]))
     shown = results[:args.top]
-    full = [r for r in shown if dups and r[0] == len(dups)]
+    full = [r for r in results if dups and r[0] == len(dups)]
     for solved, ent, op, combo in shown:
         mark = "  ★消除全部冲突" if dups and solved == len(dups) else ""
         print(f"  {op}({', '.join(combo)})  消除 {solved}/{len(dups)}  熵 {ent:.3f}{mark}")
+    if degenerate:
+        degenerate.sort(key=lambda r: (-r[0], -r[1]))
+        print(f"\n-- 退化组合（含逐包唯一宽字段 {sorted(uniqueish)}，"
+              "消除冲突是平凡结果，不参与主排名） --")
+        for solved, ent, op, combo in degenerate[:5]:
+            print(f"  {op}({', '.join(combo)})  消除 {solved}/{len(dups)}  熵 {ent:.3f}")
+        if len(degenerate) > 5:
+            print(f"  …另 {len(degenerate) - 5} 条")
     if trivial:
         print(f"  （另 {len(trivial)} 个全流常量组合平凡消除所有冲突，不列入排名，如 "
               + ", ".join(f"{op}({','.join(c)})" for op, c in trivial[:5]) + "…）")
     if dups and not full:
-        print("  [!] top 内无消除全部冲突的组合——调大 --top、扩字段池，或复合函数不是 xor/add/sub")
+        print("  [!] 无消除全部冲突的非退化组合——注意：真复合不一定消除冲突")
+        print("      （判例：冲突由重生字段携带时，真组合继承冲突，消不动；")
+        print("       该走下面的『铺轴 + oracle 过滤』处方，不是调大 --top 死磕排名）")
     print("\n只报告不裁决：消除冲突 ≠ 就是明文；命中组合交给 decode_engine.py + oracle 验证。")
+
+    # ---- 冲突诊断 + 下一步处方（可照抄；不执行须 ledger 落账理由） ----
+    if dups and conflicts:
+        # 重生字段诊断：tsval/ipid/pkt 在重传或时间戳重生时合法变化，
+        # 其余字段全部一致 ⇒ 冲突是载体噪声，重复键取第一次出现即可，无需字段级修复
+        REGEN = {"tsval", "pkt", "ipid"} | {f"tsval.n{i}" for i in range(8)}
+        if set(conflicts) <= REGEN:
+            print("\n-- 冲突诊断 --")
+            print("  冲突全部由重传/时间戳重生字段携带（tsval/pkt/ipid），其余字段在重复键上一致")
+            print("  ⇒ 重复键取第一次出现即可（decode_engine 键化去重已自动处理）；")
+            print("  ⇒ 明文若是含重生字段的复合函数，冲突天然存在——不要试图'修掉'它。")
+    if dups:
+        print("\n-- 下一步（照抄执行，或 ledger.py --note 落账不执行的理由） --")
+        key_arg = f"--key-expr \"{args.key_expr}\"" if args.key_expr else f"--key {args.key}"
+        stream_arg = f" --stream \"{args.stream}\"" if args.stream else ""
+        if full:
+            for solved, ent, op, combo in full[:3]:
+                print(f"  python3 decode_engine.py {args.pcap}{stream_arg} {key_arg} \\")
+                print(f"    --fields \"{','.join(combo)}\" --ops {op} --arity {len(combo)} \\")
+                print(f"    --order index --order seq --order tsval --packing hi --packing lo \\")
+                print(f"    --oracle sha256:<目标hash>   # 无 hash 用 prefix:/printable（弱）")
+        else:
+            # 排名不收敛 ⇒ 铺轴 + oracle 过滤：全部窄字段（≤8bit 非常量）喂 decode_engine
+            pool = [f for f in fields
+                    if field_width(f) <= 8 and len({field_value(f, p) for p in packets}) > 1]
+            print("  排名不含真解时改走『铺轴 + oracle 过滤』（decode_engine 全交叉）：")
+            print(f"  python3 decode_engine.py {args.pcap}{stream_arg} {key_arg} \\")
+            print(f"    --fields \"{','.join(pool)}\" --ops xor --arity 1-3 \\")
+            print(f"    --order index --order seq --order tsval --packing hi --packing lo \\")
+            print(f"    --oracle sha256:<目标hash>   # 附件二进制有零引用置换表时加 --order perm:<表文件>")
 
     if args.json:
         out = {
@@ -324,6 +443,10 @@ def main():
             "ranking": [
                 {"op": op, "fields": list(combo), "keys_solved": s, "entropy": round(e, 6)}
                 for s, e, op, combo in results[:max(args.top, 50)]
+            ],
+            "degenerate_combos": [
+                {"op": op, "fields": list(combo), "keys_solved": s, "entropy": round(e, 6)}
+                for s, e, op, combo in degenerate[:50]
             ],
             "trivial_constant_combos": len(trivial),
             "caveat": "冲突是假设生成器，不是排除器；真实重传载荷可合法不同",

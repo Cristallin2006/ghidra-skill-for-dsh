@@ -12,6 +12,8 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 Cython 扩展题独立求解（2026-09-27，Reverse-chal：`chal.so` = Cython 3.0.10 CPython 扩展，IDEA 变体 + SM4 S 盒 + 随机掩码诱饵门）：不参考旧台账/WP，**55 分钟**从分诊到 flag 落盘，原程序正/负对照验证通过；途中 churn/longrun 两道机械闸门按设计拦截。复盘另定位 ~30 分钟可压缩流程损耗（SSA 追踪器前置等），同类题目标 20–25 分钟。
 
+协议逆向盲测（2026-09-28，AegisTrace：pcap 三字段半字节隐信道 + 零引用置换表 + 自定义协议完整利用链）：把 skill 内的判例文件与全部答案要素（用法示例、密钥流公式、golden 值）脱敏移出后重测，**29 分钟 / 169 步**独立解出 flag（对照组 20 分钟，当时判例在库但经审计未读）。脱敏代价 ~6–9 分钟，换来可复用性证明——解题由方法论与机械闸门承载，不靠剧透。session 逐行审计确认：判例文件/旧台账/WP 零接触，golden 值首现于 `decode_engine.py` 自身的 oracle 命中输出，结论经原程序 8/8 次接受回执终审。
+
 ## 结构（1 底座 + 7 场景）
 
 | 目录 | 职责 |
@@ -24,7 +26,7 @@ Cython 扩展题独立求解（2026-09-27，Reverse-chal：`chal.so` = Cython 3.
 | `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、打桩 oracle 家族（单因子隔离）、模型差分校验、跨架构 qemu-user/gdb-multiarch、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
 | `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
 | `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
-| `docs` | 横向文档：`smoke-tests.md`（新脚本/新能力的最小冒烟判据——防"写了但永远不走"）、`legacy-plugin-pitfalls.md`（旧插件坑归档） |
+| `docs` | 横向文档：`smoke-tests.md`（新脚本/新能力的最小冒烟判据——防"写了但永远不走"）、`legacy-plugin-pitfalls.md`（旧插件坑归档）、`cases/`（真题判例归档，含完整题解，仅供写 smoke 判据时人工参考，不链回 skill） |
 
 边界规则：执行代码在 core，场景 skill 只有方法论；知识存 `references/` 可 grep 的纯数据文件，路由靠触发点指针，不建"知识库 skill"。
 

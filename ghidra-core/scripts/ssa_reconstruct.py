@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import os
 import sys
 
 for _stream in (sys.stdout, sys.stderr):
@@ -122,9 +123,11 @@ def main():
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-    print("直线程序 %d 行%s"
-          % (len(lines),
-             " -> " + args.out if args.out else "（--out 落盘后可喂 peel_inverse.py）"))
+    print("直线程序 %d 行%s" % (len(lines), " -> " + args.out if args.out else ""))
+    peel = os.path.join(os.path.dirname(os.path.abspath(__file__)), "peel_inverse.py")
+    print("下一步（铁律 6 闸，不是建议）：python3 %s %s —— 任何求逆/z3/SMT 之前先查掩码依赖图，"
+          "检出滞后递推段就逐层手工剥离，无干净结构才放行 SMT"
+          % (peel, args.out or "<recon.txt> --out 落盘后再跑本步>"))
 
     rows = explain_literals(events)
     unresolved = sum(1 for _, _, h in rows if not h)

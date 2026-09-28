@@ -10,10 +10,14 @@
 
 用法：
   python decode_engine.py cap.pcap --key-expr "(tsval>>8)&0xff" \
-      --fields pay.lo,tsval.n0,seq.n1 --ops xor --arity 3 \
-      --order perm:perm.txt --packing hi --oracle sha256:<64hex> --json @out.json
+      --fields pay.lo,tsval.n0 --ops xor --arity 2 \
+      --order index --packing hi --oracle sha256:<64hex> --json @out.json
 
 出口码：0 命中；1 跑完无命中；2 硬门拒绝（无 oracle / 候选超预算 / 参数错）。
+
+混合流保护（T-A2#1）：与数据包同键的无载荷包（握手/纯 ACK）会自动剔除并告警
+（SYN 抢走 key=0 的"第一次出现"曾让一条 71 包混合流 miss）；纯元数据信道
+（全流无载荷）不受影响；要保留用 --keep-empty。
 """
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conflict_oracle import OPS, combine, field_value, field_width, iter_tcp, parse_keys  # noqa: E402
+from conflict_oracle import OPS, combine, drop_key_colliding_empty, field_value, field_width, iter_tcp, parse_keys  # noqa: E402
 
 MAX_PACK_WIDTH = 8
 
@@ -131,6 +135,8 @@ def main():
     ap.add_argument("--packing", action="append", choices=["hi", "lo"], required=True,
                     help="半字节打包先后，可多次给")
     ap.add_argument("--oracle", help="sha256:<hex> | sha256-hex:<hex> | printable | prefix:<hex>（硬门，缺省拒绝）")
+    ap.add_argument("--keep-empty", action="store_true",
+                    help="保留与数据包同键的无载荷包（握手/纯 ACK）。缺省自动剔除并告警（T-A2#1）")
     ap.add_argument("--max-candidates", type=int, default=2_000_000)
     ap.add_argument("--json", metavar="@out.json", help="命中候选 + 覆盖矩阵写 JSON 文件")
     args = ap.parse_args()
@@ -187,6 +193,14 @@ def main():
           + ("（缺省取包数最多）" if not args.stream else ""))
 
     # ---- 键化 + 重复 key 取第一次出现 ----
+    # T-A2#1：无载荷握手/纯 ACK 包与数据包同键时，会抢走"第一次出现"污染明文流
+    # （实测：SYN 的 (tsval>>8)&0xff==0 抢走 key=0，71 包混合流 miss / 剔后 68 包流 hit）。
+    if not args.keep_empty:
+        stream_pkts, dropped_empty = drop_key_colliding_empty(stream_pkts, args.key_expr, args.key)
+        if dropped_empty:
+            print(f"[!] {len(dropped_empty)} 个无载荷包（握手/纯 ACK）与数据包同键——已剔除"
+                  f"（防 key 被 SYN 抢走第一次出现）；要保留用 --keep-empty")
+
     groups = parse_keys(stream_pkts, args.key_expr, args.key)
     keyed = [(k, stream_pkts[idxs[0]]) for k, idxs in groups.items()]
     n_dup = sum(1 for idxs in groups.values() if len(idxs) > 1)

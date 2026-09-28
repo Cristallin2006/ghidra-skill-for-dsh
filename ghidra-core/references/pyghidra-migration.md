@@ -24,14 +24,14 @@
 - **分析配置可用**：`driver.py import --analysis minimal|default`。`minimal` 关闭重型分析器（实测关掉 Decompiler Switch Analysis / DWARF / Demangler GNU / Function ID / Stack / Create Address Tables），`default` 重新打开（实测打开 Aggressive Instruction Finder / Decompiler Parameter ID）。
   注：`setBoolean` 必须在事务内调用，否则 `db.NoTransactionException`。
 
-### 实测覆盖（对 AegisTrace 的 stripped ELF，96 函数）
+### 实测覆盖（对某 CTF stripped ELF，96 函数）
 
 **上游 21 个脚本 + `analysis_config` 均可用**：`triage_scan` `analyze_binary` `get_memory_map` `get_symbols` `list_functions` `decompile_function` `decompile_all` `get_disassembly` `get_xrefs` `get_call_graph` `get_basic_blocks` `search_strings` `search_bytes` `get_data_at_address` `list_classes` `emulate_function` `add_comment` `set_function_signature` `rename_symbol`（地址或名字）`patch_bytes`（含写权限授予）`set_analysis_options`（已被 `analysis_config.py` 取代，保留仅作参考）
 
 **本 skill 新增 4 个，同样实测通过**（同一 stripped ELF）：`exec_code` `export_binary` `apply_c_types` `apply_data_type`
 - `exec_code.py` —— 文档承诺的名字空间逐个验证存在：`program`/`listing`/`memory`/`fm`/`toAddr`/`find_function`/`output_json` 全部可用（`fm.getFunctionCount() == 96`）
 - `export_binary.py` —— 导出 18576 字节，与原文件 **SHA256 完全一致**；同时返回 `md5`/`original_md5` 便于确认补丁是否生效
-- `apply_c_types.py` —— 解析出 14 个类型（`/aegis_hdr`、`/aegis_op` + 12 个 stdint typedef）
+- `apply_c_types.py` —— 解析出 14 个类型（`/svc_hdr`、`/svc_op` + 12 个 stdint typedef）
 - `apply_data_type.py` —— 需前一步**已落盘**，见 SKILL.md §5 类型库两步走
 
 **脚本目录（迁移当时的构成）= 25 个任务 `.py` + `driver.py` + `analysis_config.py`（共 27 个），无 shell 脚本**——此后目录持续增长（现行 47 个 `.py`，三层结构见 SKILL.md §5）；`run-headless.sh` 曾在目录里，现已删除；`analyzeHeadless` 只由 `driver.py` 的 `.java` 分支调用，不要直接用它跑 `.py`。`__pycache__` 不必提交。
@@ -47,9 +47,9 @@
 产出的扁平项目结构正是 `exec`/`exec-w` 能打开的。
 
 ```bash
-driver.py export ./aegis_service      # 建项目（一次性）
-driver.py list   ./aegis_service      # -> /aegis_service (x86:LE:64:default)
-driver.py exec   ./aegis_service get_xrefs.py "@out/xrefs.json" 0x102ae0 both
+driver.py export ./svc               # 建项目（一次性）
+driver.py list   ./svc               # -> /svc (x86:LE:64:default)
+driver.py exec   ./svc get_xrefs.py "@out/xrefs.json" 0x102ae0 both
 ```
 
 实测三段全通，`get_xrefs` 返回 3 条。分工是：**export 负责持久化，import 负责一次性的进程内分析+分诊**。
