@@ -6,15 +6,25 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 ## 实测性能
 
-同一道 CTF 逆向题（UPX 壳 + 换表 base64 + RC4）：调校前 40 分钟做不出 → 调校后 **16 分钟解出**。提速来自机制而非模型：常驻 daemon + 三道脚本闸门（断路器/权威读数/求逆检查）+ 函数级 Oracle + 脱壳域，每次实战踩坑都固化成铁律与脚本。
+全部结果为真实 CTF 题独立求解（不参考旧台账/WP），经原程序正负对照验证、session 逐行审计确认。
 
-经多轮真题复盘与第三方对抗审计持续硬化（happyVm / DEFCON26 quals 等）：伪码 fatal 误判基线 6.0% → 2.8%（尾调用甄别）；跳转表/栈帧/常量三类"手读 asm"高危动作全部脚本化；台账从 observe/conclude 扩展为 **observe / conclude / anomaly / hypothesis / plan / stuck** 六种对象，假设与枚举预算不再只活在聊天里。
+| 题目 | 题型 | 成绩 | 关键证据 |
+|---|---|---|---|
+| encode | UPX 壳 + 换表 base64 + RC4 | 40 min 做不出 → **16 min 解出** | 调校前后同题对比；提速来自机制而非模型：常驻 daemon + 三道脚本闸门 + 函数级 Oracle + 脱壳域 |
+| Reverse-chal | Cython 3.0.10 CPython 扩展；IDEA 变体（mod-65537 乘）+ SM4 S 盒 + 随机掩码诱饵门 | **30 min 解出**（同题最快，首解 55 min） | 语义建模路径：识别算法族后重建分组密码求逆；flag 结论带 `--program-accept` 落账 |
+| AegisTrace | pcap 三字段半字节隐信道 + 零引用置换表 + 自定义协议完整利用链 | **29 min / 169 步**盲测解出 | 判例文件与全部答案要素脱敏移出后重测（对照组 20 min）；golden 值首现于 oracle 命中输出，结论经原程序 8/8 次接受回执终审 |
 
-Cython 扩展题独立求解（2026-09-27，Reverse-chal：`chal.so` = Cython 3.0.10 CPython 扩展，IDEA 变体 + SM4 S 盒 + 随机掩码诱饵门）：不参考旧台账/WP，**55 分钟**从分诊到 flag 落盘，原程序正/负对照验证通过；途中 churn/longrun 两道机械闸门按设计拦截。复盘另定位 ~30 分钟可压缩流程损耗（SSA 追踪器前置等），同类题目标 20–25 分钟。
+**同题三轮回放（Reverse-chal，2026-09-30）**——每次失败都归因落地为机械修复，直到解出：
 
-同题三轮回放（2026-09-30，Reverse-chal 复测）：4ccec36c 骨架弃用投降（121 min 无 flag）→ 归因落地四处修复（骨架使用闸 / 否定论断强制落账 / stop_check 带路径投降闸 / cone_invert.py 锥形反推）；29bf99c0 谎称「上下文将尽」投降（19 min 无 flag，实测 1M 窗口占用不足三成）→ 再落三处修复（矛盾分类判词 / `--diff-symbolize` 输入字面量自动符号化 / 未收敛投降闸）；**ddf11a87 30 分钟解出**——语义建模路径（识别 IDEA 族 mod-65537 乘 + SM4 S 盒，重建分组密码后求逆），未修改原程序正负对照验证，flag 结论带 `--program-accept` 落账，session 审计确认旧台账/WP 零接触。同题最快纪录 55 → 30 分钟。
+1. `4ccec36c` 骨架弃用投降（121 min 无 flag）→ 落地四处修复：骨架使用闸 / 否定论断强制落账 / stop_check 带路径投降闸 / `cone_invert.py` 锥形反推
+2. `29bf99c0` 谎称「上下文将尽」投降（19 min 无 flag，实测 1M 窗口占用不足三成）→ 再落三处修复：矛盾分类判词 / `--diff-symbolize` 输入字面量自动符号化 / 未收敛投降闸
+3. `ddf11a87` **30 min 解出**，两道机械闸门按设计拦截
 
-协议逆向盲测（2026-09-28，AegisTrace：pcap 三字段半字节隐信道 + 零引用置换表 + 自定义协议完整利用链）：把 skill 内的判例文件与全部答案要素（用法示例、密钥流公式、golden 值）脱敏移出后重测，**29 分钟 / 169 步**独立解出 flag（对照组 20 分钟，当时判例在库但经审计未读）。脱敏代价 ~6–9 分钟，换来可复用性证明——解题由方法论与机械闸门承载，不靠剧透。session 逐行审计确认：判例文件/旧台账/WP 零接触，golden 值首现于 `decode_engine.py` 自身的 oracle 命中输出，结论经原程序 8/8 次接受回执终审。
+**持续硬化指标**（多轮真题复盘 + 第三方对抗审计，happyVm / DEFCON26 quals 等）：
+
+- 伪码 fatal 误判基线 **6.0% → 2.8%**（尾调用甄别）
+- 跳转表 / 栈帧 / 常量三类「手读 asm」高危动作全部脚本化
+- 台账从 observe/conclude 扩展为 **observe / conclude / anomaly / hypothesis / plan / stuck** 六种对象——假设与枚举预算不再只活在聊天里
 
 ## 结构（1 底座 + 7 场景）
 
