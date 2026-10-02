@@ -7,7 +7,8 @@ Host-side tool (any Python 3.8+, stdlib only; 纯本地文件工具，不经 dae
 递推  mask_i = (mask_{i-2} + F_i(mask_{i-1})) & 0xffffffff，F_i 只依赖更早掩码与
 常量 ⇒ 从已知的两个末端掩码逐层反解  mask_{i-2} = (mask_i - F_i(mask_{i-1})) & mask，
 完全不需要 SMT。本脚本在 ssa_reconstruct 产出的直线程序上把这种"滞后-2 递推段"
-检出来；检不出干净结构时才放行 z3/SMT（或先做 S-box 反查/常量折叠）。
+检出来；检不出干净结构（或递推段证伪不是求解目标）时转 cone_invert.py 锥形反推，
+仍不通才放行 z3/SMT（或先做 S-box 反查/常量折叠）。
 
 用法: peel_inverse.py <recon.txt> [--min-run N] [--emit-solver peel_solve.py]
   <recon.txt> 为 ssa_reconstruct.py --out 的直线程序；
@@ -300,6 +301,11 @@ def main():
             print("已生成剥离骨架: %s" % os.path.abspath(args.emit_solver))
             print("   填 KNOWN（每段段末两个掩码的目标值）/ CALL_TABLES（查表函数）"
                   "/ SEEDS（种子实测值）后运行，即逐层反解 + 前向验证。")
+            print("   骨架使用闸（4ccec36c：骨架 head 一眼弃用、0 填 0 跑，"
+                  "z3 长征 91 min 交卷丢 flag）：0 次填写/运行 = 未过闸；")
+            print("   主张「检出段与目标不重合/不适用」须 conclude 带证据"
+                  "（剥离后目标仍不可达，或扰动实验证明检出段纯 RNG/常量-only）才放行 SMT；")
+            print("   递推段确实不是目标 ⇒ 转 cone_invert.py 锥形反推（每语句可逆就无需 SMT）。")
         else:
             print()
             print("下一步（闸的输出是命令不是建议）:")
@@ -309,9 +315,15 @@ def main():
                   "/ CALL_TABLES（查表函数）后运行，逐层反解 + 前向验证。")
             print("   检出递推段后直奔 z3/SMT = 违规（判例：47246ce9——检出后 0 次剥离，"
                   "z3 模型连修 4 次未收敛，47 min 无 flag）。")
+            print("   骨架生成后 0 次填写/运行同样 = 未过闸（判例：4ccec36c——骨架 head 一眼")
+            print("   弃用，z3 长征 91 min 后把 peel 路径写进 stuck 交卷）；递推段确实不是目标")
+            print("   ⇒ 转 cone_invert.py 锥形反推，别直接跳 SMT。")
     else:
-        print("   未发现干净的滞后-2 结构 ⇒ 再考虑 z3/SMT"
-              "（或先做 S-box 反查/常量折叠）。")
+        cone = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "cone_invert.py")
+        print("   未发现干净的滞后-2 结构 ⇒ 下一步 cone_invert.py 锥形反推：")
+        print("   python3 %s %s --known <目标变量=值> [--calls calls.py]" % (cone, args.recon))
+        print("   每语句可逆（+/-/^/全掩码 & 精确反解，查表调用爆破 2^16）就无需 SMT；")
+        print("   cone 反推也走不通（有损语句聚集）才考虑 z3/SMT（或先做 S-box 反查/常量折叠）。")
     return 0
 
 

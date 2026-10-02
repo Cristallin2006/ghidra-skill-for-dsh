@@ -225,6 +225,25 @@ CPython 扩展且本机 Python 版本兼容时，`import` 它就完了——之�
   所以检出段的下一步被机械化为命令：`peel_inverse.py <recon> --emit-solver peel_solve.py`
   生成剥离骨架（f0/f1 探针自动判加法/异或反解，缺料会指名要 KNOWN/CALL_TABLES/SEEDS 的哪一项），
   填值运行即逐层反解 + 前向自验；z3 模型接线连错 2 次必须回本路径，禁止修第 3 次。
+  **骨架弃用 = 未过闸，投降须拦**——4ccec36c：骨架生成后 `head -60` 判「structural,
+  key-schedule chains」弃用（0 填 0 跑），z3 长征 91 min 后推导出「逐语句反向传播」正解
+  却写进 stuck escalation 直接交卷，121 min 无 flag。三处补丁：① 「检出段与目标不重合」
+  是否定性论断，必须 conclude 带证据才放行 SMT，被后续观测推翻走 anomaly + --overturn
+  （该 session 自证 mask 链数据相关后前提已崩未更新，又按旧前提走了 70 min）；
+  ② 递推段非目标/无递推段 → `cone_invert.py <recon> --known 名=值 [--calls calls.py]`
+  锥形反推（每语句单操作数精确反解 + 查表爆破 2^16，矛盾 exit 1 = 换方程），两档都不通
+  才轮到 SMT；③ stuck 是升级起点不是终点——stop_check 收尾机械拦截
+  「末条 stuck 且 escalate 与 tried 零交集」。
+  **未收敛 ≠ 穷尽，「上下文将尽」不是出口**——29bf99c0：同一题（Cython 扩展）轨迹良好
+  （找到判定门、过了 peel 闸、用了 cone_invert），但只符号化 4 个输入常量（实际 8+ 个），
+  锥体被残留字面量完全决定 → 全可正算报矛盾 → 误弃 cone_invert 自写更弱的 binv.py，
+  一轮 +38 未收敛后**谎称「上下文将尽」交卷**（实测 1M 窗口占用不足三成），19 min 无 flag。
+  三处补丁：① cone_invert 矛盾分两类判词——锥内含未知量 = 方程错了换方程；
+  锥体无未知量 = 符号化不完整，印 `--diff-symbolize` 确切命令（两份 recon 按值 diff
+  自动符号化全部输入相关字面量，行数错位也能用），禁止据此弃路径；
+  ② stop_check 第五类闸：stuck 后自己落账「未收敛/未拿到」且无新 stuck、无 flag 结论、
+  用户没发过话 → deny（escalate 执行过一次不算穷尽）；③ 纪律卡/SKILL.md：
+  「上下文将尽/预算不足」不是交卷理由，上下文压力的正确响应是窗口化读取继续推进。
 - **Spy 子类拦截属性写入**：`class Spy(mod.Cls): def __setattr__(self,k,v): ...`——直接看到
   `__init__` 里每个状态单元写几次、真 check 读哪个量；配合 `dir()`/`__dict__` 读全状态。
 - **差分读出累加器**：校验是 `acc == 0` 且 `acc += f(内部字节, 随机抽样)` 时，**强制第 k 个抽样为

@@ -12,6 +12,8 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 Cython 扩展题独立求解（2026-09-27，Reverse-chal：`chal.so` = Cython 3.0.10 CPython 扩展，IDEA 变体 + SM4 S 盒 + 随机掩码诱饵门）：不参考旧台账/WP，**55 分钟**从分诊到 flag 落盘，原程序正/负对照验证通过；途中 churn/longrun 两道机械闸门按设计拦截。复盘另定位 ~30 分钟可压缩流程损耗（SSA 追踪器前置等），同类题目标 20–25 分钟。
 
+同题三轮回放（2026-09-30，Reverse-chal 复测）：4ccec36c 骨架弃用投降（121 min 无 flag）→ 归因落地四处修复（骨架使用闸 / 否定论断强制落账 / stop_check 带路径投降闸 / cone_invert.py 锥形反推）；29bf99c0 谎称「上下文将尽」投降（19 min 无 flag，实测 1M 窗口占用不足三成）→ 再落三处修复（矛盾分类判词 / `--diff-symbolize` 输入字面量自动符号化 / 未收敛投降闸）；**ddf11a87 30 分钟解出**——语义建模路径（识别 IDEA 族 mod-65537 乘 + SM4 S 盒，重建分组密码后求逆），未修改原程序正负对照验证，flag 结论带 `--program-accept` 落账，session 审计确认旧台账/WP 零接触。同题最快纪录 55 → 30 分钟。
+
 协议逆向盲测（2026-09-28，AegisTrace：pcap 三字段半字节隐信道 + 零引用置换表 + 自定义协议完整利用链）：把 skill 内的判例文件与全部答案要素（用法示例、密钥流公式、golden 值）脱敏移出后重测，**29 分钟 / 169 步**独立解出 flag（对照组 20 分钟，当时判例在库但经审计未读）。脱敏代价 ~6–9 分钟，换来可复用性证明——解题由方法论与机械闸门承载，不靠剧透。session 逐行审计确认：判例文件/旧台账/WP 零接触，golden 值首现于 `decode_engine.py` 自身的 oracle 命中输出，结论经原程序 8/8 次接受回执终审。
 
 ## 结构（1 底座 + 7 场景）
