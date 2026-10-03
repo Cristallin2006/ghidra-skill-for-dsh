@@ -45,6 +45,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 ## 安装
 
+0. **作为 dsh Skill 市场安装**：市场源填仓库地址 + git 引用 `v0.9-market`（收录版，不含尚在实测的 pwn-exploit；见 [Release 页](https://github.com/Cristallin2006/ghidra-skill-for-dsh/releases/tag/v0.9-market)）；手动安装走下面：
 1. 九个目录拷到 `~/.dsh/skills/`（pwn-exploit / traffic-analysis / android-re 独立可选；pwn-exploit 的 exp 执行依赖 WSL 工具链，见 TOOLCHAIN.md）
 2. 建引擎 venv（Python ≥ 3.11）并 editable 安装引擎：
    ```bash
