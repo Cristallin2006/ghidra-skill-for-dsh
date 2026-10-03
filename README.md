@@ -1,5 +1,7 @@
 # ghidra-skill-for-dsh
 
+**简体中文 | [English](README_EN.md) | [日本語](README_JA.md)**
+
 面向 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）的逆向工程 agent skill 家族：Ghidra 12.x headless 常驻 daemon（~0.2s/命令，无 Jython/GUI/MCP 依赖）+ 八场景方法论。覆盖 CTF 逆向、crackme、恶意样本分诊、漏洞预筛、二进制利用（pwn）、pcap 取证、APK 分析。
 
 Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored [ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) + dsh patches) plus eight scenario skills — triage / unpack / static / vuln-audit / dynamic / pwn / traffic / android-re — for CTF reverse engineering, unpacking, malware triage, binary exploitation, pcap forensics and APK analysis.
