@@ -14,6 +14,7 @@
 | traffic-analysis | 输入是 pcap/pcapng | 流量分诊（协议树/隧道/隐信道）；提取出的二进制回 re-triage | tshark 可用性以 doctor toolchain 节为准 |
 | android-re | 输入是 APK 且纯 DEX（无 lib/） | apk-triage：多 dex 启发式（真逻辑常在极小 dex）、签名/debuggable 判定、flag 形态全扫 | jadx/apktool 可用性以 doctor 为准 |
 | vuln-audit | 任务目的是找漏洞/攻击面 | 按 checklist 逐项排查，命中项回 ghidra-static 深挖确认 | 排查结论逐项给"已查/未查+原因"，禁止默认无洞 |
+| pwn-exploit | 漏洞已定位要写 exp / 附件是 binary+libc+nc 地址 | 先 `pwn_triage.py` 保护矩阵硬门再选线；exp 一律 WSL 跑；flag 结论必须远程回显 `--program-accept` | 未跑 pwn_triage 直接写 exp = 流程违规；patchelf 副本上的成功只算中间结论 |
 
 ## 判据自动化
 
@@ -53,3 +54,11 @@
 | `decode_engine.py` | aegis_telemetry.pcap + `--stream "10.77.3.41:49622->10.77.3.9:8443" --key-expr "(tsval>>8)&0xff" --fields pay.lo,tsval.n0,seq.n1 --ops xor --arity 3 --order perm:<rodata[0x32e0:0x3320]> --packing hi --oracle sha256:75c75a60…ff45146f`（**不做 tshark 预过滤**） | 自动剔除 3 个同键无载荷握手包并告警（71→68 包）；命中 `8f6419d4…e25577a1`，exit 0；`--keep-empty` 时保留污染（流 71 包，可 miss）——T-A2#1 回归 |
 | `conflict_oracle.py` | 同上 pcap + 同 stream/key-expr | 冲突集干净：仅 tsval/tsval.n0/pkt 在键 {5,12,31,45} 冲突（无 sport/dport/flags 假冲突）；打印「重生字段」冲突诊断；末尾恒输出 decode_engine 处方（排名不收敛时给「铺轴+oracle 过滤」窄字段池命令）；多流且未给 `--stream` 时 stderr 告警选流；`--keep-empty` 时假冲突原样可见 |
 | 边界：纯元数据信道 | 全无载荷的合成 pcap | 两个脚本都**不**剔除任何包（纯元数据信道不受污染防护影响） |
+
+## 脚本级冒烟用例（pwn-exploit/scripts/）
+
+> 玩具样本现做现用（WSL `gcc` 一把出）；`/bin/ls` 的期望值以 pwntools `checksec --file=/bin/ls` 为交叉 oracle（双源互验，铁律 11 精神）。
+
+| 脚本 | 输入 | 最小验证 |
+|---|---|---|
+| `pwn_triage.py` | ① WSL `/bin/ls`；② 全裸玩具（`gcc -fno-stack-protector -z execstack -no-pie -z norelro`）；③ seccomp 玩具（内嵌 `"seccomp"` 字符串）+ 同目录拷 libc.so.6/ld-linux；④ 非 ELF（.c 文件）；⑤ 不存在路径 | ① NX 开/Canary 有/PIE 开/RELRO Full，exit 0，与 checksec 一致；② 四项全关 + 「可直接塞 shellcode」hint，exit 0；③ seccomp 检出 → stderr 硬门提示 + **exit 2**，libc+ld 附件触发 patchelf 对齐告警；④⑤ 均 exit 4；附件扫描不得把 `corelist` 误判为 core dump |

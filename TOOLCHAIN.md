@@ -52,14 +52,15 @@
 |---|---|---|---|
 | binutils 2.42（strings/readelf/nm/objdump） | `/usr/bin/` | ELF 分析基础件 | re-triage strings -el/readelf；**Git Bash 无 binutils**，这是唯一来源 |
 | gdb 15.1 | `/usr/bin/gdb` | 调试器 | ghidra-static 转动态 |
-| pwndbg 2026.9.15 | `/root/pwndbg`（.gdbinit 已接线） | gdb 增强（heap/context/telescope） | ghidra-static gdb 工作流 |
-| pwntools 4.15.0 | `/root/re-pwn-venv/bin/pwn` | pwn 脚本框架 | ghidra-static pwn 题；pwn checksec 是 ELF 侧 checksec |
-| ROPgadget 7.7 | `/root/re-pwn-venv/bin/ROPgadget` | ROP gadget 搜索 | ghidra-static ROP 链 |
+| pwndbg 2026.9.15 | `/root/pwndbg`（.gdbinit 已接线） | gdb 增强（heap/context/telescope） | ghidra-static gdb 工作流、pwn-exploit 崩溃现场分析 |
+| pwntools 4.15.0 | `/root/re-pwn-venv/bin/pwn` | pwn 脚本框架（含 `libcdb` lookup/fetch 离线反查 libc） | pwn-exploit exp 编写；pwn checksec 是 ELF 侧 checksec |
+| ROPgadget 7.7 | `/root/re-pwn-venv/bin/ROPgadget` | ROP gadget 搜索 | pwn-exploit ROP 链 |
 | ropper 1.13.13 | `/root/re-pwn-venv/bin/ropper` | ROP gadget 备选（语义搜索） | 同上 |
+| patchelf 0.18.0 | `/usr/bin/patchelf` | 换 interpreter/rpath 对齐题目 libc | pwn-exploit 验证门（本地通≠远程通） |
 | qiling 1.4.6 | `/root/re-pwn-venv`（import） | 全系统仿真 | re-unpack VMProtect64 档、re-triage 免疫反调试仿真 |
 | qiling rootfs | `/root/qiling-rootfs`（sparse：x86_windows+x8664_windows；registry=python-registry 样本 hive 复刻，System32 DLL 49 个从宿主拷入） | Windows 仿真根文件系统 | qiling Windows 仿真必需 |
-| one_gadget 1.10.0 | `/usr/local/bin/one_gadget` | libc 一把梭 gadget | ghidra-static pwn |
-| seccomp-tools 1.7.1 | `/usr/local/bin/seccomp-tools` | seccomp 规则 dump/分析 | ghidra-static 沙箱题 |
+| one_gadget 1.10.0 | `/usr/local/bin/one_gadget` | libc 一把梭 gadget | pwn-exploit ret2libc 收尾 |
+| seccomp-tools 1.7.1 | `/usr/local/bin/seccomp-tools` | seccomp 规则 dump/分析 | pwn-exploit 沙箱题（pwn_triage.py 检出后强制） |
 | qemu-system-x86 8.2.2 | `/usr/bin/qemu-system-x86_64` | 整机仿真 | re-triage 固件/异架构 |
 | qemu-user | `/usr/bin/qemu-riscv64` / `qemu-aarch64` | foreign-arch ELF 直接运行（user 模式） | re-dynamic 跨架构分支；DEFCON26 riscv64 复盘缺口 |
 | gdb-multiarch | `/usr/bin/gdb-multiarch` | 跨架构调试（配 `qemu-<arch> -g 1234` + `target remote`） | 同上 |

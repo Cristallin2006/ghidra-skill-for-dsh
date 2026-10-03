@@ -77,4 +77,4 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 | `references/cpp-binary.md` | C++ 样本：vtable/RTTI 恢复、this 指针类型化、STL 噪声过滤、MFC 消息映射 |
 | `references/classic-crypto.md` | 认出算法后的求逆执行：换表 base64/RC4/TEA 手撕、流水线求逆纪律（识别归 ghidra-core crypto-ident.md） |
 | `references/decompiler-pitfalls.md` | 要引用伪码下结论前：L0-L3 信任模型、反编译器失败模式表、五阶段流水线、质量门 6 条（decomp_lint.py 体检先行） |
-| `references/pwn-essentials.md` | 漏洞定位完成、要写 exp 时：checksec 打法树/ROP/libc 泄露/pwntools 骨架（WSL 工具链） |
+| （已迁移） | 漏洞定位完成、要写 exp 时 → 转 **`pwn-exploit`** 场景 skill（`pwn-exploit/references/basic-chain.md`：checksec 打法树/ROP/libc 泄露/pwntools 骨架，WSL 工具链） |

@@ -1,8 +1,8 @@
 # ghidra-skill-for-dsh
 
-面向 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）的逆向工程 agent skill 家族：Ghidra 12.x headless 常驻 daemon（~0.2s/命令，无 Jython/GUI/MCP 依赖）+ 七场景方法论。覆盖 CTF 逆向、crackme、恶意样本分诊、漏洞预筛、pcap 取证、APK 分析。
+面向 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）的逆向工程 agent skill 家族：Ghidra 12.x headless 常驻 daemon（~0.2s/命令，无 Jython/GUI/MCP 依赖）+ 八场景方法论。覆盖 CTF 逆向、crackme、恶意样本分诊、漏洞预筛、二进制利用（pwn）、pcap 取证、APK 分析。
 
-Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored [ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) + dsh patches) plus seven scenario skills — triage / unpack / static / vuln-audit / dynamic / traffic / android-re — for CTF reverse engineering, unpacking, malware triage, pcap forensics and APK analysis.
+Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored [ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) + dsh patches) plus eight scenario skills — triage / unpack / static / vuln-audit / dynamic / pwn / traffic / android-re — for CTF reverse engineering, unpacking, malware triage, binary exploitation, pcap forensics and APK analysis.
 
 ## 实测性能
 
@@ -26,7 +26,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 - 跳转表 / 栈帧 / 常量三类「手读 asm」高危动作全部脚本化
 - 台账从 observe/conclude 扩展为 **observe / conclude / anomaly / hypothesis / plan / stuck** 六种对象——假设与枚举预算不再只活在聊天里
 
-## 结构（1 底座 + 7 场景）
+## 结构（1 底座 + 8 场景）
 
 | 目录 | 职责 |
 |---|---|
@@ -36,6 +36,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 | `ghidra-static` | 静态深挖：反编译/xref/标注/patch/交付；Go/Rust stripped 指纹、CTF 模式库（含 fp16 自检向量） |
 | `vuln-audit` | 漏洞模式 checklist：内存破坏/格式化串/整数溢出/命令注入等 8 类，可达性优先 |
 | `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、打桩 oracle 家族（单因子隔离）、模型差分校验、跨架构 qemu-user/gdb-multiarch、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
+| `pwn-exploit` | 从洞到 flag：pwn_triage 保护矩阵硬门、checksec 决策树、ROP/fmtstr/堆/FSOP/内核配方库（370KB 按需 grep）、pwntools 模板五件套；「本地通≠远程通」验证门强制远程回显落账 |
 | `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
 | `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
 | `docs` | 横向文档：`smoke-tests.md`（新脚本/新能力的最小冒烟判据——防"写了但永远不走"）、`legacy-plugin-pitfalls.md`（旧插件坑归档）、`cases/`（真题判例归档，含完整题解，仅供写 smoke 判据时人工参考，不链回 skill） |
@@ -44,7 +45,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 
 ## 安装
 
-1. 八个目录拷到 `~/.dsh/skills/`（traffic-analysis / android-re 独立可选）
+1. 九个目录拷到 `~/.dsh/skills/`（pwn-exploit / traffic-analysis / android-re 独立可选；pwn-exploit 的 exp 执行依赖 WSL 工具链，见 TOOLCHAIN.md）
 2. 建引擎 venv（Python ≥ 3.11）并 editable 安装引擎：
    ```bash
    python3.12 -m venv ~/ghidra-rpc-venv
@@ -98,5 +99,5 @@ catalog 只注入 skill 的 description，SKILL.md 正文和铁律不在上下�
 - [wgpsec/AboutSecurity](https://github.com/wgpsec/AboutSecurity) ctf-reverse 知识库
 - [Und3rf10w/ai-ghidra-tools](https://github.com/Und3rf10w/ai-ghidra-tools)（ghidra_scripts 脚本集，现为 legacy 冻结层）
 - [mukul975/Anthropic-Cybersecurity-Skills](https://github.com/mukul975/Anthropic-Cybersecurity-Skills)（Apache-2.0，Go/Rust/crypto 识别/JS 反调试知识片段）
-- [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) ctf-forensics（MIT，traffic-analysis 配方）
+- [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills)（MIT：ctf-forensics → traffic-analysis 配方；ctf-pwn → pwn-exploit 知识配方库 18 篇 + pwntools 模板 5 件）
 - [yaklang/hack-skills](https://github.com/yaklang/hack-skills) traffic-analysis-pcap（MIT，决策树骨架）
