@@ -2,6 +2,14 @@
 
 **简体中文 | [English](README_EN.md) | [日本語](README_JA.md)**
 
+[![Release](https://img.shields.io/github/v/release/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/releases)
+[![License: MIT](https://img.shields.io/github/license/Cristallin2006/ghidra-skill-for-dsh)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/stargazers)
+[![dsh skill](https://img.shields.io/badge/dsh-skill-blue)](https://www.npmjs.com/package/@deepseek-ai/dsh)
+[![Ghidra 12.x headless](https://img.shields.io/badge/Ghidra-12.x%20headless-red)](https://ghidra-sre.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20WSL-lightgrey)](TOOLCHAIN.md)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.11-blue)](TOOLCHAIN.md)
+
 面向 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）的逆向工程 agent skill 家族：Ghidra 12.x headless 常驻 daemon（~0.2s/命令，无 Jython/GUI/MCP 依赖）+ 八场景方法论。覆盖 CTF 逆向、crackme、恶意样本分诊、漏洞预筛、二进制利用（pwn）、pcap 取证、APK 分析。
 
 Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored [ghidra-rpc](https://github.com/cellebrite-labs/ghidra-rpc) + dsh patches) plus eight scenario skills — triage / unpack / static / vuln-audit / dynamic / pwn / traffic / android-re — for CTF reverse engineering, unpacking, malware triage, binary exploitation, pcap forensics and APK analysis.

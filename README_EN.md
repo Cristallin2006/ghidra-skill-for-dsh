@@ -1,6 +1,14 @@
 # ghidra-skill-for-dsh
 
-**简体中文 | [English](README_EN.md) | [日本語](README_JA.md)**
+**[简体中文](README.md) | English | [日本語](README_JA.md)**
+
+[![Release](https://img.shields.io/github/v/release/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/releases)
+[![License: MIT](https://img.shields.io/github/license/Cristallin2006/ghidra-skill-for-dsh)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/stargazers)
+[![dsh skill](https://img.shields.io/badge/dsh-skill-blue)](https://www.npmjs.com/package/@deepseek-ai/dsh)
+[![Ghidra 12.x headless](https://img.shields.io/badge/Ghidra-12.x%20headless-red)](https://ghidra-sre.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20WSL-lightgrey)](TOOLCHAIN.md)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.11-blue)](TOOLCHAIN.md)
 
 A reverse-engineering agent skill family for [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) (DeepSeek Harness): a Ghidra 12.x headless resident daemon (~0.2s/command, no Jython/GUI/MCP dependency) plus eight scenario methodologies. Covers CTF reverse engineering, crackmes, malware triage, vulnerability pre-screening, binary exploitation (pwn), pcap forensics, and APK analysis.
 

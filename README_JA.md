@@ -2,6 +2,14 @@
 
 **[简体中文](README.md) | [English](README_EN.md) | 日本語**
 
+[![Release](https://img.shields.io/github/v/release/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/releases)
+[![License: MIT](https://img.shields.io/github/license/Cristallin2006/ghidra-skill-for-dsh)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Cristallin2006/ghidra-skill-for-dsh)](https://github.com/Cristallin2006/ghidra-skill-for-dsh/stargazers)
+[![dsh skill](https://img.shields.io/badge/dsh-skill-blue)](https://www.npmjs.com/package/@deepseek-ai/dsh)
+[![Ghidra 12.x headless](https://img.shields.io/badge/Ghidra-12.x%20headless-red)](https://ghidra-sre.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20WSL-lightgrey)](TOOLCHAIN.md)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.11-blue)](TOOLCHAIN.md)
+
 [dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)(DeepSeek Harness)向けリバースエンジニアリング agent skill ファミリー:Ghidra 12.x ヘッドレス常駐デーモン(約 0.2 秒/コマンド、Jython/GUI/MCP 不要)+ 8 シナリオの方法論。CTF リバース、crackme、マルウェアトリアージ、脆弱性プレスクリーニング、バイナリ悪用(pwn)、pcap フォレンジック、APK 解析をカバー。
 
 ## 実測パフォーマンス
