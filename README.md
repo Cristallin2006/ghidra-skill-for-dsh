@@ -36,7 +36,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 | `ghidra-static` | 静态深挖：反编译/xref/标注/patch/交付；Go/Rust stripped 指纹、CTF 模式库（含 fp16 自检向量） |
 | `vuln-audit` | 漏洞模式 checklist：内存破坏/格式化串/整数溢出/命令注入等 8 类，可达性优先 |
 | `re-dynamic` | 跑起来看：函数级 Oracle（qiling）、打桩 oracle 家族（单因子隔离）、模型差分校验、跨架构 qemu-user/gdb-multiarch、Frida 时间/随机源 hook、Windows GUI 消息驱动 |
-| `pwn-exploit` | 从洞到 flag：pwn_triage 保护矩阵硬门、checksec 决策树、ROP/fmtstr/堆/FSOP/内核配方库（370KB 按需 grep）、pwntools 模板五件套；「本地通≠远程通」验证门强制远程回显落账 |
+| `pwn-exploit` | 从洞到 flag：pwn_triage 保护矩阵硬门、checksec 决策树、ROP/fmtstr/堆/FSOP/内核配方库（370KB 按需 grep）、pwntools 模板五件套、游戏/文字冒险题专章（`references/game-pwn.md`：经济溢出/数值墙路标/道具编辑堆原语）；「本地通≠远程通」验证门强制远程回显落账 |
 | `traffic-analysis` | pcap 分诊、DNS/ICMP/时序隐信道、USB HID 还原、WPA/TLS 解密；脚本全零依赖 + tshark |
 | `android-re` | 纯 DEX APK：多 dex 启发式、jadx 四档反编译、Toast 锚点定位、真机 oracle、v1 重签 |
 | `docs` | 横向文档：`smoke-tests.md`（新脚本/新能力的最小冒烟判据——防"写了但永远不走"）、`legacy-plugin-pitfalls.md`（旧插件坑归档）、`cases/`（真题判例归档，含完整题解，仅供写 smoke 判据时人工参考，不链回 skill） |
@@ -84,8 +84,9 @@ python "$SK/rpc_driver.py" version-track old.exe new.exe --changed-only
 
 catalog 只注入 skill 的 description，SKILL.md 正文和铁律不在上下文里——"AI 不遵守 skill 准则"多源于此。`dsh-hooks/` 用 dsh 内置的 hooks-claude-code 桥把关键纪律变成机械门：
 
-- **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（9 条，不依赖 agent 自觉读 SKILL.md）
+- **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（10 条，不依赖 agent 自觉读 SKILL.md）
 - **PreToolUse（Pwsh|Bash）**：`gate_sample.py` 对**无台账样本**的分析类直读（xxd/strings/objdump…）exit 2 阻断并给出流程指引（建台账后放行，pcap 修头等合法开局已豁免）；`gate_explore.py` 熔断 heredoc/cat 落盘式探索——angr 禁项（无帧槽位/仿真证据不许上符号执行）、Cython 前置、变体枚举熔断（直指 model_diff.py）、30min ≥25 次探索且零 stuck 强制落账；`gate_longrun.py` 长任务强制落盘
+- **PreToolUse（Pwsh|Bash|Write|Edit|Read）**：`gate_stuck.py` 卡点自述熔断——会话日志近 45min 内自述卡住（强措辞 1 次/弱措辞 ≥2 条）而台账零 stuck → exit 2 强制落账（判例 b781ff3c：4 次自述零落账，两个半边事实 30min 未接线，38min 零 exploit）；每 episode 只拦一次，无活跃台账不执勤
 - **PreToolUse（Write）**：`gate_churn.py` 拟合熔断——目录 24h ≥8 个 .py 且活跃台账零 stuck → 逼 stuck 落账或升级 z3/emulate
 - **Stop**：`stop_check.py` 收尾核对（默认启用，会话归属判定）——本会话台账有 observe 无下文 / flag 结论缺 program_accept / 存在 open hypothesis → deny 强制核对
 

@@ -14,6 +14,7 @@ skill 加载了、规则能逐条背出，仍违反 9 条）。本目录用 dsh 
 | `gate_churn.py` | PreToolUse（matcher `Write\|write`） | 拟合熔断：目录近 24h ≥8 个 .py 且活跃台账零 stuck → 阻断，逼 stuck 落账或升级 z3/emulate |
 | `gate_explore.py` | PreToolUse（同 bash matcher） | **heredoc 载体盲区**（f862c151：97 次 heredoc 探索不过 churn 闸门）：① angr 禁项（台账无帧槽位/仿真证据不许上符号执行）② Cython 前置（python_ext 样本无 const_scan/frame_map 证据不许建模）③ 变体枚举熔断（脚本体与窗内 ≥2 次历史相似且台账无增长 → 直指 model_diff.py）④ 探索计数熔断（30min ≥25 次且零 stuck）⑤ **cat/tee 落盘 churn**（`cat > x.py <<EOF` 载体，与 gate_churn 同判定核——92a0a107：19 次 cat<<EOF 落盘 16 个脚本） |
 | `gate_longrun.py` | PreToolUse（同 bash matcher） | 长任务落盘门：`timeout ≥300s` 裸跑 python 脚本 → 阻断，指引 guarded_run.py |
+| `gate_stuck.py` | PreToolUse（matcher `Pwsh\|pwsh\|Bash\|bash\|Write\|write\|Edit\|edit\|Read\|read`） | **卡点自述熔断**（b781ff3c：4 次自述「going in circles / Not feasible」、stuck 0 次，10:11 识别的 shop 溢出与 10:40 的 800 万血条 30 分钟未接线，38min 零 exploit）：扫本会话日志近 45min 的 assistant 消息——强措辞（going in circles/死循环/原地打转…）1 次即命中，弱措辞（not feasible/doesn't work/行不通/卡住…）≥2 条不同消息才命中；命中且有活跃台账、自述后无 stuck 落账 → exit 2 强制 `ledger.py stuck`（先 `query` 盘点接线）。每 episode 只拦一次（`.stuck-gate.json` 按 session_id 冷却）；无活跃台账不执勤（普通开发会话豁免）；命令含 ledger.py 一律放行 |
 | `stop_check.py` | Stop | 收尾核对（v3 = v2 会话归属 + 三类检查）：本会话写过的台账 ① 有 observe 无 conclude/stuck ② flag 结论缺 program_accept ③ **存在 open hypothesis**（铁律 4 闭环门）→ deny 强制核对 |
 | `hooks.json` | — | Claude Code 格式挂载清单（`${CLAUDE_PLUGIN_ROOT}` = 本目录） |
 
@@ -55,6 +56,10 @@ WSL 侧路径改为 `/root/.dsh/hooks/...`，hooks.json 里命令的 `python` �
 - gate_explore 误伤 → 探索计数文件是 `<ws>/out/.explore-runs.jsonl`（24h 滚动，
   可整删重置）；angr 禁项/Cython 前置靠台账证据放行（落一条含 frame_map/emulate/
   const_scan 字样的 observe 即可）；变体熔断靠台账条目增长放行
+- gate_stuck 误检（自述是在描述题目现象而非自己卡住）→ 跑一条 `ledger.py observe`
+  说明现状，或干脆 stuck 一条（语义：我知道自己卡没卡）；冷却标记在
+  `<ws>/out/.stuck-gate.json`，按 session_id 记录，可整删重置；自测：
+  `bash dsh-hooks/test_gate_stuck.sh`（9 用例，假 DSH_HOME 离线跑）
 - **gate_explore 计数文件长期不增长的排查**（92a0a107 实盘冻结成因）：该 hook 只计
   「内联代码运行」（heredoc / `-c` / stdin 管道）与 `cat/tee` 落盘 .py 两类载体；
   `python3 已落盘脚本.py` 的**运行**有意不计（正常 write-run-debug 循环误伤面太大，

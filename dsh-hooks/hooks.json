@@ -24,6 +24,12 @@
         ]
       },
       {
+        "matcher": "Pwsh|pwsh|Bash|bash|Write|write|Edit|edit|Read|read",
+        "hooks": [
+          { "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/gate_stuck.py\"", "timeout": 20 }
+        ]
+      },
+      {
         "matcher": "Write|write",
         "hooks": [
           { "type": "command", "command": "python \"${CLAUDE_PLUGIN_ROOT}/gate_churn.py\"", "timeout": 10 }
