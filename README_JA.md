@@ -95,7 +95,7 @@ catalog は skill の description しか注入しない —— SKILL.md 本文�
 - **SessionStart/SubagentStart**:セッション作成時に圧縮版規律カード(10 条)を注入(agent が自発的に SKILL.md を読むことに依存しない)
 - **PreToolUse(Pwsh|Bash)**:`gate_sample.py` が**台帳なしサンプル**への解析系直読(xxd/strings/objdump…)を exit 2 でブロックしフロー指引を提示(台帳作成後に放行、pcap ヘッダ修復等の合法な開始は免除);`gate_explore.py` が heredoc/cat 落盤式探索を溶断 —— angr 禁止項(フレームスロット/エミュレーション証拠なしにシンボリック実行禁止)、Cython 前置、変種列挙溶断(model_diff.py を直示)、30 分 ≥25 回探索かつ stuck ゼロで強制記帳;`gate_longrun.py` は長時間タスクのディスク出力を強制
 - **PreToolUse(Pwsh|Bash|Write|Edit|Read)**:`gate_stuck.py` 停滞自述溶断 —— セッションログ直近 45 分に停滞自述(強い措辞 1 回/弱い措辞 ≥2 メッセージ)があり台帳に stuck がゼロ → exit 2 で記帳強制(判例 b781ff3c:自述 4 回・記帳ゼロ、2 つの半分の事実が 30 分未接続、38 分で exploit ゼロ);episode ごと最大 1 回、活動台帳なしでは不执勤
-- **PreToolUse(Write)**:`gate_churn.py` フィッティング溶断 —— ディレクトリ 24 時間 ≥8 個の .py かつ活動台帳 stuck ゼロ → stuck 記帳または z3/emulate への昇格を強制
+- **PreToolUse(Write)**:`gate_churn.py` フィッティング溶断 —— ディレクトリ 24 時間 ≥8 個の .py かつ活動台帳 stuck ゼロ → stuck 記帳または z3/emulate への昇格を強制。**再発火型**:台帳への 1 接触で 8 スクリプト分の枠、使い切ると再溶断(判例 116cdc04:旧版は stuck 1 回の記帳で永久放行、その後 20+ スクリプト無遮断)
 - **Stop**:`stop_check.py` 收尾照合(既定有効、セッション帰属判定)—— 当セッションの台帳に observe あり後続なし / flag 結論に program_accept 欠落 / open hypothesis 存在 → deny で照合強制
 
 インストール:`dsh-hooks/` を `~/.dsh/hooks/` にコピーし、profile の `cordis.patch.yml` に hooks-claude-code マウント項目を挿入(完全な YAML とトラブルシューティング/ロールバックは `dsh-hooks/README.md`)。変更は **dsh サービス再起動 + 新規セッション**で有効化。

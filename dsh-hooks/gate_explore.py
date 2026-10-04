@@ -13,7 +13,9 @@ matcher "Pwsh|pwsh|Bash|bash"。f862c151 session 事故：97 次 heredoc 探索�
      且台账无 const_scan/frame_map 证据 -> 先跑 §12 元数据 + 帧槽位再建模
   B2. cat/tee 落盘 churn：cat > x.py <<EOF / tee x.py 写脚本，目标目录近 24h
      .py >= 8 且活跃台账零 stuck -> 与 gate_churn 同一判定核（bash 载体，
-     92a0a107：19 次 cat<<EOF 落盘 16 个 gdb 脚本完全绕开 Write 侧）
+     92a0a107：19 次 cat<<EOF 落盘 16 个 gdb 脚本完全绕开 Write 侧）；
+     stuck 已落账时转为可重触发——最近一次台账接触后再积 8 个脚本重新熔断
+     （116cdc04：stuck 一次后永久放行，后续 20+ 脚本零拦截）
   C. 变体枚举：本次为探索性运行，其脚本体与滑窗内 >=2 次历史脚本体相似
      （difflib ratio > 0.7，"同一思路换措辞"的指纹），且台账条目数自最早
      相似运行起未增长 -> 直指 model_diff.py 分歧指纹分类
@@ -33,6 +35,7 @@ import json
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 for _s in (sys.stdout, sys.stderr):
@@ -133,6 +136,31 @@ def ledger_stucks(text):
         except Exception:
             continue
     return n
+
+
+def latest_ledger_touch(ledgers):
+    """活跃台账中最近一条带可解析 ts 的条目时间(epoch)，无则 None。
+
+    churn 再触发锚点：stuck 之后的 observe/conclude/resolve 同样是台账
+    接触，接触即续脚本额度（与 gate_churn.py 同一语义）。
+    """
+    latest = None
+    for j in ledgers:
+        try:
+            lines = j.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                t = datetime.strptime(json.loads(line).get("ts", ""),
+                                      "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                continue
+            latest = t if latest is None else max(latest, t)
+    return latest
 
 
 def find_sample(cmd, cwd):
@@ -309,20 +337,36 @@ def main() -> int:
                     if parent.is_dir() else []
             except OSError:
                 recent_py = []
-            if len(recent_py) >= CHURN_LIMIT and ledgers \
-                    and ledger_stucks(ltext) == 0:
-                return block(
-                    f"[gate_explore · 铁律6 拟合熔断] 目录 {parent} 近 24h 已有 "
-                    f"{len(recent_py)} 个 .py 脚本（本次经 cat/tee 落盘，"
-                    "绕开 Write 侧 gate_churn 的载体盲区二号——92a0a107："
-                    "19 次 cat<<EOF 落盘 16 个 gdb 辅助脚本），"
-                    "且活跃台账 stuck 条目为 0。\n"
-                    "继续写脚本前先做其一：\n"
-                    "  ① python ~/.dsh/skills/ghidra-core/scripts/ledger.py stuck "
-                    "<样本> --at <卡点> --tried <已试路径> --escalate <升级去向>\n"
-                    "  ② 拟合/接线连错 2 次的强制升级：model_diff.py 分歧指纹 / "
-                    "z3 求解 / emulate-function 仿真取数"
-                )
+            if len(recent_py) >= CHURN_LIMIT and ledgers:
+                if ledger_stucks(ltext) == 0:
+                    return block(
+                        f"[gate_explore · 铁律6 拟合熔断] 目录 {parent} 近 24h 已有 "
+                        f"{len(recent_py)} 个 .py 脚本（本次经 cat/tee 落盘，"
+                        "绕开 Write 侧 gate_churn 的载体盲区二号——92a0a107："
+                        "19 次 cat<<EOF 落盘 16 个 gdb 辅助脚本），"
+                        "且活跃台账 stuck 条目为 0。\n"
+                        "继续写脚本前先做其一：\n"
+                        "  ① python ~/.dsh/skills/ghidra-core/scripts/ledger.py stuck "
+                        "<样本> --at <卡点> --tried <已试路径> --escalate <升级去向>\n"
+                        "  ② 拟合/接线连错 2 次的强制升级：model_diff.py 分歧指纹 / "
+                        "z3 求解 / emulate-function 仿真取数"
+                    )
+                anchor = latest_ledger_touch(ledgers)
+                if anchor is not None:
+                    after = [f for f in recent_py
+                             if f.stat().st_mtime > anchor]
+                    if len(after) >= CHURN_LIMIT:
+                        return block(
+                            f"[gate_explore · 铁律6 拟合熔断·再触发] 目录 {parent} "
+                            f"自最近一次台账落账后又新增 {len(after)} 个 .py 脚本"
+                            "（cat/tee 载体）。\n"
+                            "一次台账接触换一批脚本额度，额度已用尽"
+                            "（判例 116cdc04：stuck 落账一次后熔断永久解除，"
+                            "之后又堆 20+ 脚本零拦截）。\n"
+                            "继续前：升级去向的结果用 ledger.py conclude/resolve "
+                            "落账；又卡住了落新的 stuck；正当推进用 observe/conclude "
+                            "说明进展即可续额度。"
+                        )
 
     # C/D 只针对探索性运行
     body = exploration_body(cmd)

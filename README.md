@@ -97,7 +97,7 @@ catalog 只注入 skill 的 description，SKILL.md 正文和铁律不在上下�
 - **SessionStart/SubagentStart**：会话创建即注入压缩版纪律卡（10 条，不依赖 agent 自觉读 SKILL.md）
 - **PreToolUse（Pwsh|Bash）**：`gate_sample.py` 对**无台账样本**的分析类直读（xxd/strings/objdump…）exit 2 阻断并给出流程指引（建台账后放行，pcap 修头等合法开局已豁免）；`gate_explore.py` 熔断 heredoc/cat 落盘式探索——angr 禁项（无帧槽位/仿真证据不许上符号执行）、Cython 前置、变体枚举熔断（直指 model_diff.py）、30min ≥25 次探索且零 stuck 强制落账；`gate_longrun.py` 长任务强制落盘
 - **PreToolUse（Pwsh|Bash|Write|Edit|Read）**：`gate_stuck.py` 卡点自述熔断——会话日志近 45min 内自述卡住（强措辞 1 次/弱措辞 ≥2 条）而台账零 stuck → exit 2 强制落账（判例 b781ff3c：4 次自述零落账，两个半边事实 30min 未接线，38min 零 exploit）；每 episode 只拦一次，无活跃台账不执勤
-- **PreToolUse（Write）**：`gate_churn.py` 拟合熔断——目录 24h ≥8 个 .py 且活跃台账零 stuck → 逼 stuck 落账或升级 z3/emulate
+- **PreToolUse（Write）**：`gate_churn.py` 拟合熔断——目录 24h ≥8 个 .py 且活跃台账零 stuck → 逼 stuck 落账或升级 z3/emulate；**可重触发**：一次台账接触换 8 个脚本额度，用尽重新熔断（判例 116cdc04：stuck 落账一次后旧版永久放行，之后又堆 20+ 脚本）
 - **Stop**：`stop_check.py` 收尾核对（默认启用，会话归属判定）——本会话台账有 observe 无下文 / flag 结论缺 program_accept / 存在 open hypothesis → deny 强制核对
 
 安装：`dsh-hooks/` 拷到 `~/.dsh/hooks/`，在 profile 的 `cordis.patch.yml` 插入 hooks-claude-code 挂载条目（完整 YAML 与排障回滚见 `dsh-hooks/README.md`）。改动需**重启 dsh 服务 + 新开会话**生效。

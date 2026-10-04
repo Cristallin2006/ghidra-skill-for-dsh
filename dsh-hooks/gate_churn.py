@@ -12,12 +12,19 @@ matcher "Write|write"。chal session 事故：agent 在 /tmp 下连写 26 个一
   4. 存在活跃台账（out/*.ledger.jsonl 12h 内有改动）且其 stuck 条目为 0
      —— 落过 stuck 说明已按铁律 6 走升级流程，放行
 
+可重触发（判例 116cdc04：stuck 落账一次后前置条件永久解除，
+之后又堆 20+ 脚本零拦截）：stuck 存在时，统计「最近一次台账接触
+（任一条目落账）之后」目录内新增的 .py 数，再满 CHURN_LIMIT 个则重新
+熔断——一次台账接触换一批脚本额度，额度用尽需要新的落账续期。
+条目时间戳不可解析时安全回退为放行。
+
 定位：速度坎，逼一次台账接触，不防蓄意绕过（heredoc 写文件不经 Write）。
 任何内部异常 -> 放行（exit 0）。
 """
 import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 for _s in (sys.stdout, sys.stderr):
@@ -39,8 +46,12 @@ def exempt(path: Path) -> bool:
     return bool(parts & EXEMPT_PARTS)
 
 
-def active_ledger_has_stuck() -> bool | None:
-    """有活跃台账时返回其 stuck 条目数>0；无活跃台账返回 None。"""
+def active_ledger_stuck_info() -> tuple[bool, float | None] | None:
+    """无活跃台账返回 None；否则返回 (有无 stuck, 最近任一条目落账 epoch 或 None)。
+
+    额度锚点用「任一类型条目的最近 ts」而非仅 stuck：stuck 之后的
+    observe/conclude/resolve 同样是台账接触，接触即续额度。
+    """
     out = Path.home() / ".dsh" / "ghidra-workspace" / "out"
     if not out.is_dir():
         return None
@@ -54,15 +65,26 @@ def active_ledger_has_stuck() -> bool | None:
             continue
     if not ledgers:
         return None
+    has_stuck = False
+    latest: float | None = None
     for j in ledgers:
         try:
             for line in j.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
-                if line and json.loads(line).get("type") == "stuck":
-                    return True
+                if not line:
+                    continue
+                e = json.loads(line)
+                if e.get("type") == "stuck":
+                    has_stuck = True
+                try:
+                    t = datetime.strptime(e.get("ts", ""),
+                                          "%Y-%m-%d %H:%M:%S").timestamp()
+                    latest = t if latest is None else max(latest, t)
+                except ValueError:
+                    continue
         except Exception:
             continue
-    return False
+    return has_stuck, latest
 
 
 def main() -> int:
@@ -88,9 +110,32 @@ def main() -> int:
         return 0
     if len(recent) < CHURN_LIMIT:
         return 0
-    stuck_ok = active_ledger_has_stuck()
-    if stuck_ok is None or stuck_ok:
+    info = active_ledger_stuck_info()
+    if info is None:
         return 0
+    has_stuck, latest_touch = info
+    if has_stuck:
+        if latest_touch is None:
+            return 0  # 条目时间戳不可解析，安全回退
+        after = [f for f in recent if f.stat().st_mtime > latest_touch]
+        if len(after) < CHURN_LIMIT:
+            return 0  # 上次台账接触换来的脚本额度未用尽，放行
+        msg = (
+            f"[gate_churn · 铁律6 拟合熔断·再触发] 目录 {parent} 自最近一次 "
+            f"台账落账后又新增 {len(after)} 个 .py 脚本。\n"
+            "上次卡点落账换来的脚本额度已用尽（判例 116cdc04：stuck 落账一次后"
+            "熔断永久解除，之后又堆 20+ 脚本零拦截）。\n"
+            "继续写脚本前先把升级流程走闭环：\n"
+            "  ① 上一卡点的升级去向执行完了吗？结果用 ledger.py conclude/"
+            "resolve 落账；\n"
+            "  ② 又卡住了就落新的 stuck：python ~/.dsh/skills/ghidra-core/"
+            "scripts/ledger.py stuck <样本> --at <卡点> --tried <已试路径> "
+            "--escalate <升级去向>\n"
+            "  ③ 若新脚本与卡点无关（正当推进），在台账用 observe/conclude "
+            "说明进展即可续额度。"
+        )
+        print(msg, file=sys.stderr)
+        return 2
     msg = (
         f"[gate_churn · 铁律6 拟合熔断] 目录 {parent} 近 24h 已有 "
         f"{len(recent)} 个 .py 脚本，且活跃台账 stuck 条目为 0。\n"

@@ -11,7 +11,7 @@ skill 加载了、规则能逐条背出，仍违反 9 条）。本目录用 dsh 
 |---|---|---|
 | `session_start.py` | SessionStart / SubagentStart | 把压缩版纪律卡注入会话/子代理上下文（additionalContext），9 条 |
 | `gate_sample.py` | PreToolUse（matcher `Pwsh\|pwsh\|Bash\|bash`） | 对**无台账样本**的分析类直读 + rpc 深挖子命令（decompile/exec-code/emulate/patch…）exit 2 阻断；有台账放行；pcap 豁免；Cython 前置（python_ext 样本无 const_scan/frame_map 证据不许深挖） |
-| `gate_churn.py` | PreToolUse（matcher `Write\|write`） | 拟合熔断：目录近 24h ≥8 个 .py 且活跃台账零 stuck → 阻断，逼 stuck 落账或升级 z3/emulate |
+| `gate_churn.py` | PreToolUse（matcher `Write\|write`） | 拟合熔断：目录近 24h ≥8 个 .py 且活跃台账零 stuck → 阻断，逼 stuck 落账或升级 z3/emulate；**可重触发**：一次台账接触（任一条目）换 8 个脚本额度，用尽重新熔断（gate_explore B2 同核） |
 | `gate_explore.py` | PreToolUse（同 bash matcher） | **heredoc 载体盲区**（f862c151：97 次 heredoc 探索不过 churn 闸门）：① angr 禁项（台账无帧槽位/仿真证据不许上符号执行）② Cython 前置（python_ext 样本无 const_scan/frame_map 证据不许建模）③ 变体枚举熔断（脚本体与窗内 ≥2 次历史相似且台账无增长 → 直指 model_diff.py）④ 探索计数熔断（30min ≥25 次且零 stuck）⑤ **cat/tee 落盘 churn**（`cat > x.py <<EOF` 载体，与 gate_churn 同判定核——92a0a107：19 次 cat<<EOF 落盘 16 个脚本） |
 | `gate_longrun.py` | PreToolUse（同 bash matcher） | 长任务落盘门：`timeout ≥300s` 裸跑 python 脚本 → 阻断，指引 guarded_run.py |
 | `gate_stuck.py` | PreToolUse（matcher `Pwsh\|pwsh\|Bash\|bash\|Write\|write\|Edit\|edit\|Read\|read`） | **卡点自述熔断**（b781ff3c：4 次自述「going in circles / Not feasible」、stuck 0 次，10:11 识别的 shop 溢出与 10:40 的 800 万血条 30 分钟未接线，38min 零 exploit）：扫本会话日志近 45min 的 assistant 消息——强措辞（going in circles/死循环/原地打转…）1 次即命中，弱措辞（not feasible/doesn't work/行不通/卡住…）≥2 条不同消息才命中；命中且有活跃台账、自述后无 stuck 落账 → exit 2 强制 `ledger.py stuck`（先 `query` 盘点接线）。每 episode 只拦一次（`.stuck-gate.json` 按 session_id 冷却）；无活跃台账不执勤（普通开发会话豁免）；命令含 ledger.py 一律放行 |
@@ -74,4 +74,4 @@ WSL 侧路径改为 `/root/.dsh/hooks/...`，hooks.json 里命令的 `python` �
 
 - 防惯性直读/惯性堆脚本，不防蓄意绕过（命令写进脚本文件即可绕过；绕过会在台账缺失上留痕）
 - 不改 dsh 本体、不动 profile 的 package.json（2026-09 双拷贝崩溃事故的教训）
-- gate_churn 是速度坎不是墙：落一条 stuck 即放行——目的是逼台账接触，不是禁止迭代
+- gate_churn 是速度坎不是墙：落一条 stuck 即放行；此后每 8 个脚本需要一次台账接触（任一条目）续额度——目的是逼台账接触成为节奏，不是禁止迭代
