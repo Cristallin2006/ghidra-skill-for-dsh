@@ -23,6 +23,7 @@ Reverse-engineering agent skills for dsh: a Ghidra headless RPC daemon (vendored
 | encode | UPX 壳 + 换表 base64 + RC4 | 40 min 做不出 → **16 min 解出** | 调校前后同题对比；提速来自机制而非模型：常驻 daemon + 三道脚本闸门 + 函数级 Oracle + 脱壳域 |
 | Reverse-chal | Cython 3.0.10 CPython 扩展；IDEA 变体（mod-65537 乘）+ SM4 S 盒 + 随机掩码诱饵门 | **30 min 解出**（同题最快，首解 55 min） | 语义建模路径：识别算法族后重建分组密码求逆；flag 结论带 `--program-accept` 落账 |
 | AegisTrace | pcap 三字段半字节隐信道 + 零引用置换表 + 自定义协议完整利用链 | **29 min / 169 步**盲测解出 | 判例文件与全部答案要素脱敏移出后重测（对照组 20 min）；golden 值首现于 oracle 命中输出，结论经原程序 8/8 次接受回执终审 |
+| vt（长城杯铁人三项初赛 · 赛时零解题） | PE32+ 反扫描装甲：28 节中 25 个伪壳节名（.vmp0/.enigma1/UPX0/.petite/logicoma…）+ 伪 Enigma/Denuvo 加密痕迹 + 96 函数共享同一 unwind 的 .pdata 伪模板；真实代码藏在线程误转字节码里 | **28 min 解出** | 自写递归下降反汇编器还原 15,997 条真实指令 → 校验收敛为标准 CRC-32 目标 → 2 字节密钥 65,536 空间穷举出唯一解 → unicorn 仿真打包器从 heap 直读 flag；正负对照成立（`79BC` 接受 / `79BD`·`79BB`·`0000` 拒绝），全程未 patch、未查 WP |
 
 **同题三轮回放（Reverse-chal，2026-09-30）**——每次失败都归因落地为机械修复，直到解出：
 
