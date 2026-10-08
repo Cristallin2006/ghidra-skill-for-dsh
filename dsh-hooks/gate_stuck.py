@@ -8,7 +8,7 @@ the author must…"),ledger.py 调用 6/215,stuck 0 次——10:11 已识别 sho
 会话被外部硬切。纪律卡的「卡住先 stuck」是纯文字约束,自觉率 0/4;本闸把它
 变成机械门。
 
-判定(PreToolUse,matcher 覆盖 bash/write/edit/read 系):
+判定(PreToolUse,matcher 覆盖 bash/write/edit/read/ask_user_question 系):
   1. 本会话日志(经 stop_check 的 zstd 流式解码)最近 WINDOW_SEC 内出现
      卡点自述:
        强措辞 1 次即命中(going in circles / i'm stuck / 死循环 / 原地打转…);
@@ -31,6 +31,11 @@ the author must…"),ledger.py 调用 6/215,stuck 0 次——10:11 已识别 sho
 失效方向(有意如此):会话日志读不到/解不开 -> 放行;大日志(>60MB 压缩)
 跳过本闸保延迟;本闸不防蓄意绕过(自述换措辞即可隐身),目标是接住
 「诚实自述但不落账」的惯性。
+
+c50c8812 判例(提问绕道):被本闸拦 2 次后,agent 改用 ask_user_question
+把回合终结在选择题上(还列了违反用户明示指令的选项),空选驳回后空转
+收场——故 matcher 扩展覆盖 ask_user_question,提问同样要先落账;
+拦截文案附带铁律 15(空选 = 按推荐选项立即自主继续)。
 """
 import json
 import os
@@ -184,6 +189,9 @@ def main() -> int:
     if not session_id or stop_check is None:
         return 0
 
+    tool_name = str(payload.get("tool_name") or payload.get("toolName") or "")
+    is_ask = "ask" in tool_name.lower()
+
     ti = payload.get("tool_input") or {}
     cmd = ti.get("command") or ""
     if isinstance(cmd, str) and "ledger.py" in cmd:
@@ -221,8 +229,15 @@ def main() -> int:
     save_marker(marker)
 
     which = "强措辞自述" if strong else f"弱措辞自述 x{len(weak_msgs)}"
+    ask_note = (
+        "提问不能绕过落账:卡点自述未落账时禁止 ask_user_question;"
+        "且提问被空选/驳回 = 按推荐选项立即自主继续,禁止以提问结束回合"
+        "(铁律 15,判例 c50c8812:提问绕道 + 列违规选项 + 空选后死寂收场)。\n"
+        if is_ask else ""
+    )
     return block(
-        f"[gate_stuck · 卡点熔断] 本会话最近 45min 内检测到卡点{which}"
+        ask_note
+        + f"[gate_stuck · 卡点熔断] 本会话最近 45min 内检测到卡点{which}"
         "(如 \"going in circles\"/\"not feasible\"/\"卡住\"/\"行不通\"),"
         "但活跃台账没有任何 stuck 落账。\n"
         "判例 b781ff3c(25 强网杯 adventure,38min 零 exploit):4 次自述卡住、"
