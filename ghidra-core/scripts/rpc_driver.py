@@ -316,6 +316,22 @@ def main(argv: list[str]) -> int:
                               f"{sub} <binary> [...]"}, out_path)
     gpr = project_for(binary)
 
+    # 铁律 1 提醒：首次对本样本执行深挖类命令时提示加载 ghidra-static 全文
+    #（脚本观测不到 dsh 的 skill 加载状态，退化为每样本提醒一次，不阻断）。
+    if sub in ("decompile", "decompile-all", "search-decompiled", "exec-code",
+               "emulate-function", "emulate-blob", "pcode", "disassemble"):
+        try:
+            sha16 = hashlib.sha256(str(binary).encode("utf-8")).hexdigest()[:16]
+            marker = WS_LINK / "out" / f".reminded-static-{sha16}"
+            if not marker.exists():
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("reminded\n", encoding="utf-8")
+                print("[提醒] 深挖命令首次命中本样本：确认已用 skill 工具加载 "
+                      "ghidra-static 全文（铁律 1）；已加载可忽略，"
+                      "本提醒每样本只出现一次", file=sys.stderr)
+        except Exception:
+            pass
+
     listed = run_rpc(env, gpr, ["list-binaries"])
     bins = (listed.get("result") or {}).get("binaries", []) or []
     known = any(b.get("short_name") == binary.name

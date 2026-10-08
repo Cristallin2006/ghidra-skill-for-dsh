@@ -33,7 +33,7 @@ python "$SK/rpc_driver.py" ensure /path/to/sample
 python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json" triage /path/to/sample
 ```
 
-产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python，**`python_ext`=Cython/CPython 扩展模块信号——exports 有 `PyInit_*` / imports 引 `Py_Initialize` / 字符串含 `__Pyx_`，命中 → ctf-patterns §12 元数据优先路线**）与 **`packer` 壳判定块**（节名 / 文件内 `UPX!` magic / 结构特征三信号交叉，verdict ∈ upx / packed-unknown / none）。`lang_hints.upx` 只是兼容字段——判壳以 `packer` 块为准，且 **verdict=none 不排除壳**（节名可改、magic 可抹）；反过来 **verdict=packed-unknown 也不等于有壳**——出现 `.CRT`/`.tls` 节（MinGW-w64 标准布局）或未初始化可写块全是 `.bss` 标准族（ELF 正常布局，Cython 扩展 `.so` 常因此误报）时，对应结构信号会被降级到 `false_positive_hints`，见到该字段先怀疑误报，不要直接去脱壳。有疑点按 advice 人工复核。参数细节见 ghidra-core §5 能力清单。
+产出：元数据（language/compiler/image_base/内存块）、按库分组的 imports/exports/entry points、可疑 API 命中（反调试/注入/加密/网络/持久化/动态加载六组）、**`selfmod_signal` 自修改信号机制预警块**（sigaction/sigprocmask 等信号族导入 + 裸 UD2 `0f 0b` 字节扫描；hit=true ⇒ 该样本的 non-returning/死代码/可达性静态判定不可信，详见路由表对应行）、干净 IAT 警告、字符串快赢（flag|pass|correct…）、语言启发（Go/Rust/.NET/Python，**`python_ext`=Cython/CPython 扩展模块信号——exports 有 `PyInit_*` / imports 引 `Py_Initialize` / 字符串含 `__Pyx_`，命中 → ctf-patterns §12 元数据优先路线**）与 **`packer` 壳判定块**（节名 / 文件内 `UPX!` magic / 结构特征三信号交叉，verdict ∈ upx / packed-unknown / none）。`lang_hints.upx` 只是兼容字段——判壳以 `packer` 块为准，且 **verdict=none 不排除壳**（节名可改、magic 可抹）；反过来 **verdict=packed-unknown 也不等于有壳**——出现 `.CRT`/`.tls` 节（MinGW-w64 标准布局）或未初始化可写块全是 `.bss` 标准族（ELF 正常布局，Cython 扩展 `.so` 常因此误报）时，对应结构信号会被降级到 `false_positive_hints`，见到该字段先怀疑误报，不要直接去脱壳。有疑点按 advice 人工复核。参数细节见 ghidra-core §5 能力清单。
 
 2. **手工补充**（详情 `references/triage.md`）：`file` / `checksec` / DIE 查壳；`strings -el` 补宽字符；PE 查 TLS 回调目录（先于 main 执行）。
 3. **下判据 → 选路线**（见下「语言/平台路由」与「路线决策」）。
@@ -84,6 +84,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | `mscoree.dll` / `_CorExeMain` | **离开 Ghidra**：dnSpyEx + de4dot，全流程见 `references/dotnet-il.md`；例外：NativeAOT / IL2CPP 是 native，留在 Ghidra |
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor）再分析 pyc——**版本判定与反编译器选择矩阵见 `references/pyc-bytecode.md`**（≤3.8 uncompyle6/decompyle3，≥3.9 pycdc）；PyArmor 加密 code object → 转 re-dynamic |
 | UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
+| `selfmod_signal.hit=true`（sigaction/sigprocmask 导入 或 裸 UD2 `0f 0b` 命中） | **可达性判词失真预警**：信号 handler 可改写保存的 RIP 让「非法指令」正常返回，Ghidra/IDA 的 non-returning/死代码/调用图截断判定一律不可信（判例：4307cc95 Glitched）——转 ghidra-static 后 MUST 先把「handler 是否推进保存的 RIP」落 `ledger.py hypothesis`，可达性否定结论走 `conclude --kind negative --proof` 硬门（铁律 10⑦） |
 | 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
 | APK | **先拆开看组成**：含 `lib/` 且逻辑在 so → 按 ABI 选 so（优先 x86_64）走 ghidra-static；**纯 DEX（无 lib/）→ `~/.dsh/skills/android-re`**（多 dex 启发式：真逻辑常在极小 dex；签名/debuggable 判定、flag 形态全扫见 android-re `references/apk-triage.md`）。JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
 | WASM / Mach-O / 内核 .ko | 见 `references/triage.md` §平台速查 |

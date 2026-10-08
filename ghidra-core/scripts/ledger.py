@@ -18,11 +18,14 @@ Commands:
   observe  <binary> --region R --tool T --note N [--delta D]
   conclude <binary> --conclusion C --address A --evidence E \
            --source S --independent yes|no [--harness H] [--quote Q] [--id K] [--overturn] \
-           [--kind finding|flag|model] [--program-accept P] [--anchor A]
+           [--kind finding|flag|model|negative] [--program-accept P] [--anchor A] [--proof P]
            （非地址型题目用 --locus region:/channel:/proto: 前缀代替 --address；
            --kind flag 必须 --program-accept 且禁止 --source self-script；
            --kind model 必须 --anchor "L2 左逆锚定：inv(fwd(已知答案))==已知答案
-           的实测输出"——fwd(inv(B))==B 恒真，不算验证）
+           的实测输出"——fwd(inv(B))==B 恒真，不算验证；
+           --kind negative（可达性/存在类否定结论）必须 --proof
+           "static-constraint: …" 或 "dynamic-forced: …"——观测缺失 ≠ 不存在，
+           铁律 10⑦）
   anomaly  <binary> --region R --note N --consequence C
   resolve  <binary> --anomaly ID (--note N --evidence E | --waive W)
   hypothesis <binary> --text H --if-true P --if-false Q --test "<cmd>" [--id K]
@@ -309,6 +312,14 @@ def cmd_observe(args) -> int:
 
     out = {"ok": True, "booked": True, "visit": entry["visit"],
            "ledger": str(jsonl)}
+    neg_kw = ("不可达", "不存在", "死代码", "无法到达", "从不命中", "从未被",
+              "拿不到", "无法获得", "unreachable", "non-returning", "dead code")
+    if any(k in entry["note"] for k in neg_kw):
+        out["negative_hint"] = ("本条 observe 含可达性/存在类否定判词——观察只能记录"
+                                "「未观测到」，证明不了「不存在」；若据此下否定结论，"
+                                "必须 conclude --kind negative --proof "
+                                "static-constraint|dynamic-forced（铁律 10⑦，"
+                                "判例 4307cc95 Glitched）")
     if entry["visit"] >= 3:
         out["warning"] = (f"该区域第 {entry['visit']} 次回访——若本条 delta "
                           "仍无实质增量，立即升级工具层级（见断路器菜单）")
@@ -443,6 +454,29 @@ def cmd_conclude(args) -> int:
                              ensure_ascii=False))
             return 2
 
+    # 铁律 10⑦ 硬门（4307cc95 Glitched：watchpoint 未触发 + hbreak 不命中 +
+    # Ghidra 无 xref 三条「未观测到」被写成「flag 路径不可达」并交付，实际是
+    # UD2 的 SIGILL handler 推进保存的 RIP 使调用正常返回——观测缺失 ≠ 不存在）。
+    # 可达性/存在类否定结论只有两种合法证据：static-constraint（给出入口到目标
+    # 每条路径上不可满足的约束）或 dynamic-forced（patch 掉中间闸门强制到达后
+    # 目标仍不执行）。
+    proof = _resolve(getattr(args, "proof", None),
+                     getattr(args, "proof_file", None), "proof")
+    if kind == "negative":
+        proof_low = proof.lower()
+        if not (proof_low.startswith("static-constraint")
+                or proof_low.startswith("dynamic-forced")):
+            print(json.dumps({"ok": False,
+                              "error": "--kind negative（可达性/存在类否定结论）必须加 "
+                                       "--proof \"static-constraint: <每条路径上不可满足的"
+                                       "约束>\" 或 \"dynamic-forced: <patch 强制到达后目标"
+                                       "仍不执行的实测>\"（长文本走 --proof-file）。"
+                                       "watchpoint 未触发 / hbreak 未命中 / 反编译器无 xref "
+                                       "只是「未观测到」，证明不了「不存在」（铁律 10⑦，"
+                                       "判例 4307cc95 Glitched）"},
+                             ensure_ascii=False))
+            return 2
+
     entry = {"type": "conclude", "ts": now(), "sha16": sha16(binary),
              "id": cid, "conclusion": conclusion,
              "address": (args.address or "").strip(), "region": locus,
@@ -454,6 +488,8 @@ def cmd_conclude(args) -> int:
         entry["program_accept"] = program_accept
     if anchor:
         entry["anchor"] = anchor
+    if proof:
+        entry["proof"] = proof
     if args.harness:
         entry["harness"] = args.harness.strip()
     if quote:
@@ -464,6 +500,14 @@ def cmd_conclude(args) -> int:
     append_entry(jsonl, entry)
     auto_render(binary)
     out = {"ok": True, "id": cid, "locked": True, "overturned": bool(old)}
+    if kind == "finding":
+        neg_kw = ("不可达", "不存在", "死代码", "无法到达", "从不命中", "从未被",
+                  "拿不到", "无法获得", "unreachable", "non-returning", "dead code")
+        if any(k in conclusion for k in neg_kw):
+            out["negative_hint"] = ("该结论含可达性/存在类否定判词——若这是此类结论，"
+                                    "应使用 --kind negative --proof static-constraint|dynamic-forced "
+                                    "重新落账（铁律 10⑦：观测缺失 ≠ 不存在）；"
+                                    "非否定结论可忽略本提示")
     if args.independent == "no":
         out["warning"] = ("该结论无独立来源交叉印证——render 中标记 UNVERIFIED；"
                           "交付前必须补第二来源（静态常量 / 第二输入 / 已知明文）"
@@ -935,11 +979,18 @@ def main() -> int:
     p.add_argument("--quote-file", help="quote 长文本走文件（UTF-8）")
     p.add_argument("--id", help="字符串/整数均可（C1、Q5-1…）；缺省 = 下一个空闲整数")
     p.add_argument("--overturn", action="store_true")
-    p.add_argument("--kind", choices=["finding", "flag", "model"], default="finding",
+    p.add_argument("--kind", choices=["finding", "flag", "model", "negative"], default="finding",
                    help="flag=flag/答案类结论：必须配 --program-accept（铁律 10⑤ 硬门），"
                         "且不允许 --source self-script；"
                         "model=模型/反演闭合声明：必须配 --anchor（铁律 10⑥ 硬门："
-                        "L2 左逆锚定 inv(fwd(已知答案))==已知答案 的实测输出）")
+                        "L2 左逆锚定 inv(fwd(已知答案))==已知答案 的实测输出）；"
+                        "negative=可达性/存在类否定结论：必须配 --proof "
+                        "static-constraint|dynamic-forced（铁律 10⑦ 硬门："
+                        "观测缺失 ≠ 不存在）")
+    p.add_argument("--proof",
+                   help="kind=negative 必填：\"static-constraint: <每条路径不可满足的约束>\" "
+                        "或 \"dynamic-forced: <patch 强制到达后目标仍不执行的实测>\"")
+    p.add_argument("--proof-file", help="proof 长文本走文件（UTF-8）")
     p.add_argument("--program-accept",
                    help="kind=flag 必填：未修改原程序/平台接受候选输入的实测记录"
                         "（投喂命令 + 成功响应原文）")

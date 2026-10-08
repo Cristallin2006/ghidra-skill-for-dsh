@@ -44,6 +44,7 @@ RPC="$HOME/Desktop/src/ghidra-bridge/ghidra-rpc-venv/Scripts"  # ghidra-rpc CLI
 - 反编译结果看不懂 → 换视角（dogbolt.org 多反编译器对比）或直接看 `disassemble` 汇编
 - **字段序、结构体偏移、常量比对这类问题，一律看汇编不要看伪码**：反编译器的栈槽命名（`local_XXXX`/`uStack_XXXX`）会给出**错误**的字段序
 - 自定义解密 stub 不想脱壳 → `emulate-function`（P-code 仿真，支持寄存器/内存预置）
+- **「不可达/死代码」先怀疑反编译器（铁律 10⑦）**：样本带自定义信号处理器（sigaction/SIGILL/SIGSEGV/SIGTRAP）或裸 UD2(`0f 0b`)/INT3 时，handler 可能改写保存的 RIP/ucontext 让「非法指令」正常返回——Ghidra/IDA 把 UD2 判 non-returning 会截断调用图，使其后代码显示为死代码（判例：4307cc95 Glitched，误判 flag 路径不可达丢 86 min）。下可达性否定结论前 MUST 先查 handler 是否推进了保存的 RIP（落 `ledger.py hypothesis`），结论走 `conclude --kind negative --proof` 硬门；triage `selfmod_signal` 命中时本检查不可跳过
 
 ## Annotate / Patch / 交付
 
