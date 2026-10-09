@@ -97,6 +97,27 @@ python "$RD" rename-function /path/to/binary FUN_00401000 check_flag
 子命令：`ensure|status|stop <binary>`（ensure 支持 `--timeout N` 秒，等待期间每 12s 向 stderr 打心跳，大二进制首载不再像死掉）+ 其余全部透传给 `ghidra-rpc` CLI（`decompile`/`functions`/`strings`/`disassemble`/`assemble`/`write-bytes`/`triage`/`exec-code`/`export-binary`/`emulate-function`/`version-track`…，全量见 `ghidra-rpc --help`）。
 二进制比对：`version-track <A> <B>` / `function-diff <A> <f1> <B> <f2>` 会自动把 B 也 load 进 A 的项目（VT 要求同项目）。
 
+### ledger.py 速查（查用法看这个，禁止为查语法去读 ledger.py 源码或逐命令 --help 轮询——c50c8812 两次因此各烧 1 min）
+
+```bash
+L="$HOME/.dsh/skills/ghidra-core/scripts/ledger.py"
+python3 "$L" query   <bin> [--region R]                          # 先查后析
+python3 "$L" observe <bin> --region R --tool T --note N [--delta "与上次差在哪"]
+python3 "$L" conclude <bin> --conclusion C (--address 0x… | --locus region:) --source S --independent yes|no
+#   conclude 变体闸门：--kind flag 须 --program-accept；--kind negative 须 --proof "static-constraint: …"|"dynamic-forced: …"；
+#   --kind model 须 --anchor "L2 左逆锚定实测"；--source self-script 须 --harness；覆盖同 id 须 --overturn
+python3 "$L" anomaly <bin> --region R --note N --consequence C
+python3 "$L" resolve <bin> --anomaly A1 (--note N --evidence E | --waive W)
+python3 "$L" hypothesis <bin> --text H --if-true P --if-false Q --test T          # 开假设
+python3 "$L" hypothesis <bin> --resolve-id H1 --status confirmed|killed --evidence E   # 关假设（waived 用 --waive 理由）
+python3 "$L" plan   <bin> --axes "轴矩阵" --budget N [--note]
+python3 "$L" brute  <bin> --keyspace "2**31" --eta "25min @ 8线程" --why-no-smt R [--tool T]
+python3 "$L" stuck  <bin> --at 位置 --tried 已试 --escalate 下一步 [--ack A1,A3]
+python3 "$L" status <bin> [--workdir 题目目录]    # churn 信号：脚本数÷条目数 >5 报警
+python3 "$L" render <bin> ; python3 "$L" validate <bin>
+# 长文本一律 --conclusion-file/--evidence-file/--proof-file/... 走 UTF-8 文件，绕 shell 引号
+```
+
 ### 长任务（后台执行）
 
 daemon 常驻后日常命令都是亚秒级，真正的长任务只剩 **`load`（大文件导入+分析）和 `version-track`（全函数关联）**——这类用 dsh Bash 工具的 `run_in_background` 跑，靠 `@out` 落盘拿结果：
@@ -224,6 +245,7 @@ export JAVA_HOME="C:/Java"
 | `ssa_reconstruct.py` ◈ | **SSA 事件流→直线程序重建 + 裸字面量解析**（§12.2 后半链，吃 ssa_trace 的 trace.json）：产出可读直线程序（行格式与 peel_inverse 输入约定一致），高频裸字面量用 identity/sw/sw<<16/位移/*16 + `sw(a)<<16|sw(b)` 打包四式逐一试解，解不出标 ?? 交人工不猜——Cython 值 C 化断链处"神奇常数"的归位器。exit 0 正常 / 2 输入错。stdlib only，不经 daemon |
 | `peel_inverse.py` ◈ | **铁律 6 工具形态：求逆前先查依赖图**（吃 ssa_reconstruct 的直线程序）：找 `& 0xffffffff` 掩码变量的依赖结构，检出"滞后-2 递推段"（mask_i 只依赖前两个）→ `--emit-solver peel_solve.py` 生成可运行剥离骨架（f0/f1 探针自动判加法/异或反解，前向重放自验），填 KNOWN（段末两掩码目标值）/CALL_TABLES（查表函数）/SEEDS（种子实测值）后运行即逐层反解；**骨架 0 次填写/运行 = 未过闸（4ccec36c）**；无干净结构转 cone_invert.py，仍不通才放行 SMT。exit 0 判定完成 / 2 输入错或骨架缺料（指名缺哪个变量）。stdlib only，不经 daemon |
 | `cone_invert.py` ◈ | **阶梯 ①' 通用锥形反推**（peel 无递推段/段非目标时的下一档，4ccec36c 复盘产物）：吃同一份直线程序，`--known 名=值` 锚点起步逐语句反向传播——`d=a OP b` 已知 d+单操作数精确反解另一个（+/-/^/全 1 掩码 & 精确；<</>>/|/%/非全 1 & 有损指名交人工），`d=fn(args)` 缺一个参数用 `--calls` 的 CALL_TABLES 前向实现爆破（默认域 2^16，`--brute fn=N` 可调）；模派生值自动带 mod 传播防误杀；**矛盾检出 exit 1 分两类判词**：① 矛盾锥含未知量 = 方程/常量错了（铁律 9 禁止续命）；② 矛盾锥全被字面量决定、无未知量 = **输入符号化不完整**（29bf99c0 判例），指引走 `--diff-symbolize reconB --out asym.txt`（同长度不同输入两份 recon 按值集合 diff——A 有 B 没有的字面量即随输入变化，自动符号化为 IN0..INK；不按行号，控制流差异导致行数错位也能用；`--min-lit` 默认 256 防误符号化结构小常量）补全后重跑；断链点（缺 CALL_TABLES/爆破域小）无论变量是否已从他路解出都单列缺料警告。exit 0 收敛 / 1 矛盾 / 2 输入错。stdlib only，不经 daemon |
+| `layer_dump.py` ◈ | **分层运行时解密样本的 dump 一条龙**（gdb 模板；c50c8812 同一模式手写 heredoc ×4 的沉淀）：`--break 0x加载器返回点 --dump VA:LEN:OUT`（可重复）→ 断点首次命中即 dump 全层并退出 + sha256/尺寸校验；`--pass-signals`（SIGILL/SIGSEGV/SIGBUS 穿透，自修改样本用；**SIGTRAP 禁止 pass**——gdb 断点/单步内部复用它，pass 即程序死，实测）、`--input` 喂 stdin、`--disasm`（objdump 线性反汇编按 VA 对齐成 OUT.dis，读时以地址为锚别信 CFG）、`--strings`。只管取层，不含解密层重载分析器。exit 0 成功 / 2 用法 / 3 gdb、objdump 缺失 / 4 断点未命中零产出。stdlib only，不经 daemon |
 
 ### 第 3 层：legacy（冻结备查，被 rpc 取代）
 

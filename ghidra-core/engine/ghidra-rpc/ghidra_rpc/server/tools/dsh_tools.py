@@ -266,6 +266,54 @@ def _handle_triage(ctx, args: dict) -> dict:
                 suspicious[category] = hits
         result["suspicious_imports"] = suspicious
 
+        # --- selfmod / signal-handler warning ---
+        # 判例 4307cc95 (07CTF Glitched): 自定义信号处理器 + 裸 UD2 时，
+        # handler 可改写保存的 RIP 让"非法指令"正常返回 —— non-returning/
+        # 死代码/调用图截断判定全部失真。与 legacy triage_scan.py 同构；
+        # c50c8812 实测 rpc triage 缺本块导致路由行从未触发。
+        signal_apis = ["sigaction", "rt_sigaction", "sigprocmask",
+                       "rt_sigprocmask", "sigreturn", "rt_sigreturn",
+                       "signal", "siginterrupt", "sigaltstack"]
+        sig_hits = []
+        for lib, name in all_import_names:
+            for base in signal_apis:
+                if _matches_family(name, base):
+                    sig_hits.append({"library": lib, "name": name})
+                    break
+        ud2_hits = []
+        try:
+            from ghidra.util.task import ConsoleTaskMonitor
+            _mon_sm = ConsoleTaskMonitor()
+            _ud2 = bytes([0x0F, 0x0B])
+            for block in mem.getBlocks():
+                if not block.isExecute():
+                    continue
+                addr = block.getStart()
+                bend = block.getEnd()
+                while addr is not None and len(ud2_hits) < 20:
+                    found = mem.findBytes(addr, bend, _ud2, None, True, _mon_sm)
+                    if found is None:
+                        break
+                    ud2_hits.append(str(found))
+                    addr = found.add(2)
+        except Exception:
+            pass
+        selfmod_hit = bool(sig_hits or ud2_hits)
+        result["selfmod_signal"] = {
+            "hit": selfmod_hit,
+            "signal_imports": sig_hits,
+            "ud2_addresses": ud2_hits,
+            "ud2_scan_capped": len(ud2_hits) >= 20,
+            "advice": (
+                "hit=true: 信号 handler 可能改写保存的 RIP 让非法指令正常返回"
+                "（判例 4307cc95 Glitched，UD2 的 SIGILL handler 推进 RIP，"
+                "Ghidra 误判 flag 路径不可达）——non-returning/死代码/可达性"
+                "静态判定不可信；下可达性否定结论前 MUST 先查 handler 是否推进"
+                "保存的 RIP（ledger.py hypothesis 落账），结论走 "
+                "conclude --kind negative --proof（铁律 10⑦）"
+            ) if selfmod_hit else ""
+        }
+
         total_imports = len(all_import_names)
         clean_libs = all(lib.lower().startswith(("kernel32", "ntdll"))
                          for lib in imports)

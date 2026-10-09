@@ -85,6 +85,7 @@ python "$SK/rpc_driver.py" "@$HOME/.dsh/ghidra-workspace/out/sample.triage.json"
 | PyInstaller / Pyarmor 特征 | 先解包（pyinstxtractor）再分析 pyc——**版本判定与反编译器选择矩阵见 `references/pyc-bytecode.md`**（≤3.8 uncompyle6/decompyle3，≥3.9 pycdc）；PyArmor 加密 code object → 转 re-dynamic |
 | UPX 节名 / `packer.verdict=upx`（magic 命中） | → re-unpack（原生 `upx -d` 或修头后解，验证清单见 re-unpack） |
 | `selfmod_signal.hit=true`（sigaction/sigprocmask 导入 或 裸 UD2 `0f 0b` 命中） | **可达性判词失真预警**：信号 handler 可改写保存的 RIP 让「非法指令」正常返回，Ghidra/IDA 的 non-returning/死代码/调用图截断判定一律不可信（判例：4307cc95 Glitched）——转 ghidra-static 后 MUST 先把「handler 是否推进保存的 RIP」落 `ledger.py hypothesis`，可达性否定结论走 `conclude --kind negative --proof` 硬门（铁律 10⑦） |
+| 分层运行时解密（selfmod_signal.hit + mprotect/munmap/mincore/mmap 内存映射族导入同现；或 ELF 无节表 + 大段高熵密文区） | **密文/损坏代码区的反编译产出是噪声**——禁止在加密区反复试 decompile/create-function/disassemble（c50c8812 在 UD2 密布区连试 5 次零产出烧 1.5 min）；静态主线 = 在「本层解密完成、下层未执行」断点（loader 返回点）dump 层 → objdump 线性反汇编 → 逐层 z3，一条龙用 ghidra-core `scripts/layer_dump.py`（--pass-signals 穿透信号）；Ghidra 只做常量/xref/元数据辅助 |
 | 自定义壳 / 熵高 | → re-unpack 失败阶梯（仿真/动态 dump；本 skill 只负责判"有壳"） |
 | APK | **先拆开看组成**：含 `lib/` 且逻辑在 so → 按 ABI 选 so（优先 x86_64）走 ghidra-static；**纯 DEX（无 lib/）→ `~/.dsh/skills/android-re`**（多 dex 启发式：真逻辑常在极小 dex；签名/debuggable 判定、flag 形态全扫见 android-re `references/apk-triage.md`）。JNI 找不到符号 → 查 `JNI_OnLoad` 的 `RegisterNatives` 方法表 |
 | WASM / Mach-O / 内核 .ko | 见 `references/triage.md` §平台速查 |

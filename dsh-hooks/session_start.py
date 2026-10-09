@@ -21,7 +21,7 @@ for _s in (sys.stdout, sys.stderr):
 CARD = """\
 [逆向纪律卡 · ghidra-skill-for-dsh，铁律全文见 ghidra-core/SKILL.md §1]
 1. 逆向/流量/脱壳/漏洞任务：动手前先用 skill 工具加载对应 SKILL.md 全文；拿到样本先 re-triage 分诊，不凭扩展名猜；反编译/exec-code/仿真等深挖前必须先加载 ghidra-static 全文。
-2. 一切区域级观察走 ledger.py observe、结论走 conclude --source --independent；分析任何区域前先 ledger.py query。
+2. 一切区域级观察走 ledger.py observe、结论走 conclude --source --independent；分析任何区域前先 ledger.py query。全命令语法速查见 ghidra-core §2「ledger.py 速查」——查用法禁止读 ledger.py 源码/逐命令 --help 轮询。
 3. 同区回访必须带 --delta（答"这次和上次差在哪"）；肉眼 hex 同区最多 2 次，第 3 次机械拒绝。
 4. 观测到不一致（重复键冲突/两次读数不同）必须 ledger.py anomaly --consequence 落账，禁止降级为"噪声/待枚举"；**「工具判词不适用/red herring」是否定性结论，必须 conclude 落账——后续观测推翻它时必须 anomaly + --overturn 标 killed，禁止带已崩前提继续（判例：4ccec36c 自证 mask 链数据相关后仍按「peel 不适用」走 z3 70 min 交卷）**。**观测缺失 ≠ 不存在**：watchpoint 未触发 / hbreak 未命中 / Ghidra 无 xref / 反编译不显示，全部只证明"没观测到"——可达性/存在类否定结论必须 `conclude --kind negative --proof static-constraint|dynamic-forced`（缺 proof 机械拒绝，用 observe 充数视同未落账）；样本带自定义 SIGILL/SIGSEGV/SIGTRAP 处理器时，反编译器的 non-returning/死代码判定一律不可信，先查 handler 是否推进了保存的 RIP（判例：4307cc95 Glitched，三条"未命中"误判 flag 路径不可达，实为 UD2 的 SIGILL handler 推进 RIP 正常返回，86 min 白走后靠 wp 才纠正）。
 5. 枚举类解码先出轴矩阵+候选预算；无 oracle（hash/一致性/校验位）不跑全交叉。**约束系统（等式/不等式组求未知输入）第一工具 = z3/SMT，禁止手写枚举器当第一解**——失败触发的断路器拦不住「永远有产出」的枚举器（判例：285db822，z3 毫秒的 BV32 方程组烧 20+ min OpenMP，z3 零调用）；候选空间 ≥ 2^28 的枚举仅在 ①密码学黑盒比对 ②SMT 证不可行 时合法，且必须先 `ledger.py brute --keyspace --eta --why-no-smt` 登记，否则 gate_bruteforce 机械阻断（hashcat/john 专用工具豁免）。
