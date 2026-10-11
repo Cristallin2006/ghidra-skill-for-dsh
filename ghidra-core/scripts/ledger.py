@@ -31,6 +31,9 @@ Commands:
   hypothesis <binary> --text H --if-true P --if-false Q --test "<cmd>" [--id K]
   hypothesis <binary> --resolve-id K (--status confirmed|killed --evidence E | --status waived --waive W)
   plan     <binary> --axes "charset(95) x order(2)" --budget 570 [--note N]
+  brute    <binary> --keyspace "2**31" --eta "25min @ 8线程" --why-no-smt R [--tool T]
+           （铁律 13 约束系统路由闸：候选空间 ≥ 2^28 的自建枚举开跑前必须登记
+           keyspace/预计耗时/SMT 不可行理由，gate_bruteforce 查此账）
   stuck    <binary> --at R --tried "A,B" --escalate TARGET [--ack "A1,A3"]
   status   <binary>
   render   <binary>
@@ -81,6 +84,7 @@ Exit codes: 0 ok, 1 usage/io error, 2 circuit breaker fired (read stdout).
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -319,7 +323,7 @@ def cmd_observe(args) -> int:
                                 "「未观测到」，证明不了「不存在」；若据此下否定结论，"
                                 "必须 conclude --kind negative --proof "
                                 "static-constraint|dynamic-forced（铁律 10⑦，"
-                                "判例 4307cc95 Glitched）")
+                                "判例 4307cc95）")
     if entry["visit"] >= 3:
         out["warning"] = (f"该区域第 {entry['visit']} 次回访——若本条 delta "
                           "仍无实质增量，立即升级工具层级（见断路器菜单）")
@@ -454,7 +458,7 @@ def cmd_conclude(args) -> int:
                              ensure_ascii=False))
             return 2
 
-    # 铁律 10⑦ 硬门（4307cc95 Glitched：watchpoint 未触发 + hbreak 不命中 +
+    # 铁律 10⑦ 硬门（4307cc95：watchpoint 未触发 + hbreak 不命中 +
     # Ghidra 无 xref 三条「未观测到」被写成「flag 路径不可达」并交付，实际是
     # UD2 的 SIGILL handler 推进保存的 RIP 使调用正常返回——观测缺失 ≠ 不存在）。
     # 可达性/存在类否定结论只有两种合法证据：static-constraint（给出入口到目标
@@ -473,7 +477,7 @@ def cmd_conclude(args) -> int:
                                        "仍不执行的实测>\"（长文本走 --proof-file）。"
                                        "watchpoint 未触发 / hbreak 未命中 / 反编译器无 xref "
                                        "只是「未观测到」，证明不了「不存在」（铁律 10⑦，"
-                                       "判例 4307cc95 Glitched）"},
+                                       "判例 4307cc95）"},
                              ensure_ascii=False))
             return 2
 
@@ -680,6 +684,91 @@ def cmd_plan(args) -> int:
     return 0
 
 
+def parse_keyspace(text: str) -> int:
+    """安全解析 keyspace 表达式：整数/0x 十六进制/2**31/1e6/95*8*3 组合。
+
+    只允许数字与 + - * ** << >> 运算符（^ 按 ** 理解），ast 白名单求值，
+    不碰 eval 全功能。
+    """
+    import ast
+    import operator
+    ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+           ast.Pow: operator.pow, ast.LShift: operator.lshift,
+           ast.RShift: operator.rshift}
+    expr = text.strip().replace("^", "**")
+    tree = ast.parse(expr, mode="eval")
+
+    def ev(node) -> int:
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return int(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return -ev(node.operand)
+        if isinstance(node, ast.BinOp) and type(node.op) in ops:
+            return ops[type(node.op)](ev(node.left), ev(node.right))
+        raise ValueError(f"不允许的表达式片段: {ast.dump(node)}")
+
+    value = ev(tree)
+    if value <= 0:
+        raise ValueError("keyspace 必须为正")
+    return value
+
+
+def cmd_brute(args) -> int:
+    """铁律 13 约束系统路由闸的登记口：大枚举开跑前的账本。
+
+    判例 285db822：BV32 约束系统（ror/add/mul）z3 毫秒出唯一解，agent 全程
+    z3 零调用、连写 4 个 OpenMP C 枚举器烧 20+ min——失败触发的断路器拦不住
+    「永远有产出」的枚举器，所以枚举本身必须先过账。gate_bruteforce.py 对
+    未登记的自建大枚举器（≥2^28）机械阻断。
+    """
+    binary = require_binary(args)
+    try:
+        ks = parse_keyspace(args.keyspace)
+    except (ValueError, SyntaxError) as ex:
+        print(json.dumps({"ok": False,
+                          "error": f"--keyspace 无法解析: {args.keyspace!r}（{ex}）；"
+                                   "支持整数 / 0x 十六进制 / 2**31 / 1e6 / 95*8*3"},
+                         ensure_ascii=False))
+        return 1
+    jsonl, _ = ledger_paths(binary)
+    entry = {"type": "brute", "ts": now(), "sha16": sha16(binary),
+             "keyspace": ks, "eta": args.eta.strip(),
+             "why_no_smt": args.why_no_smt.strip(),
+             "tool": (args.tool or "").strip()}
+    append_entry(jsonl, entry)
+    auto_render(binary)
+    print(json.dumps({"ok": True, "keyspace": ks,
+                      "ledger": str(jsonl)}, ensure_ascii=False))
+    return 0
+
+
+_TECHNIQUE_CLASSES = {
+    "z3/SMT": ("z3", "smt", "solver", "约束求解", "求解器"),
+    "peel/cone剥离": ("peel_inverse", "peel_solve", "cone_invert", "剥离", "锥形"),
+    "gdb动态": ("gdb", "watchpoint", "hwatch", "断点", "单步", " layer_dump"),
+    "仿真": ("emulate", "unicorn", "仿真"),
+    "伪码": ("decompile", "伪码", "反编译"),
+    "汇编/字节直读": ("disassemble", "objdump", "反汇编", "xxd", "hexdump",
+                      "肉眼", "字节"),
+    "枚举/爆破": ("爆破", "枚举", "brute", "穷举", "遍历"),
+    "patch改跑": ("patch", "改字节"),
+    "结构/元数据": ("frame_map", "const_scan", "readelf", "栈帧", "元数据"),
+    "差分对比": ("model_diff", "diff", "差分", "对比实验"),
+    "符号执行": ("angr", "符号执行"),
+    "trace/hook": ("strace", "ltrace", "trace", "frida", "hook"),
+    "strings/xref": ("strings", "xref", "交叉引用"),
+}
+
+
+def _technique_classes(text):
+    """提取文本命中的技术类集合（stuck 换路校验用）。"""
+    low = text.lower()
+    return {cls for cls, kws in _TECHNIQUE_CLASSES.items()
+            if any(k in low for k in kws)}
+
+
 def cmd_stuck(args) -> int:
     binary = require_binary(args)
     jsonl, _ = ledger_paths(binary)
@@ -703,11 +792,73 @@ def cmd_stuck(args) -> int:
                   "ledger.py resolve <binary> --anomaly <id> --waive \"为何豁免\"")
             return 2
         acknowledged = need
+    # ── 否定结论矛盾检查（判例 a0f3be66：T16 运行期派生的 negative 落账后
+    # 136 秒，escalate 仍写「离线 z3/angr 求解」——正是该否定已杀死的路线类，
+    # 35 分钟空转）。活跃 negative conclude 在场时，stuck 必须显式声明
+    # 升级路径为何不被这些否定覆盖。──────
+    latest_conc: dict = {}
+    for e in entries:
+        if e.get("type") == "conclude":
+            latest_conc[str(e.get("id"))] = e
+    negs = [e for e in latest_conc.values() if e.get("kind") == "negative"]
+    neg_ack = (getattr(args, "ack_negatives", None) or "").strip()
+    if negs and len(neg_ack) < 20:
+        print(f"[否定结论在场 · 升级路径矛盾检查] 该二进制有 {len(negs)} 条活跃 "
+              "negative conclude（已被推翻的除外）：")
+        for e in negs:
+            print(f"  #{e.get('id')} [{e.get('region') or e.get('address') or ''}] "
+                  f"{e.get('conclusion')}")
+        print("每条 negative 都杀死了一整类路线。--escalate 若仍落在被杀死的类里"
+              "（判例 a0f3be66：「不存在固定输入/运行期相关」落账后仍升级离线"
+              "符号求解 → 35 分钟空转），就是重复事故。二选一：")
+        print("  · 升级路径不被上述否定覆盖 → 加 --ack-negatives "
+              "\"逐条说明为何不被覆盖\"（≥20 字）")
+        print("  · 确实被覆盖 → 换升级路径；被否定杀死的类不许再作为 escalate")
+        return 2
+    # ── 换路校验（gate_stuck 下游：落账不能只是补账，必须包含换路）──────
+    # 失效模式：被 gate_stuck 拦 → 补一条 tried/escalate 与上次雷同的 stuck →
+    # 继续原路径（门教会的是应付检查，不是换路）。两条机械判据，仅约束本样本
+    # 已有 stuck 落账的后续 stuck；同类不同法的正当重试加 --note 说明差异点放行。
+    prev_stucks = [e for e in entries if e.get("type") == "stuck"]
+    if prev_stucks and not (getattr(args, "note", None) or "").strip():
+        new_tried = args.tried.strip()
+        new_esc = args.escalate.strip()
+        last = prev_stucks[-1]
+        combo_new = f"{new_tried}|{new_esc}".lower()
+        combo_old = (str(last.get("tried") or "") + "|"
+                     + str(last.get("escalate") or "")).lower()
+        ratio = difflib.SequenceMatcher(None, combo_new, combo_old).ratio()
+        if ratio > 0.8:
+            print(f"[stuck 换路校验] 本次 tried/escalate 与上一次 stuck 雷同"
+                  f"（相似度 {ratio:.2f}>0.8）——落账不是补账，必须包含换路。\n"
+                  f"上一次：tried={last.get('tried')!r} escalate={last.get('escalate')!r}\n"
+                  "正当的同类重试（如换模型/换常量再跑同一技术）：加 "
+                  "--note \"与上次的差异点\" 说明后放行。")
+            return 2
+        esc_classes = _technique_classes(new_esc)
+        if esc_classes:
+            seen = _technique_classes(new_tried)
+            for e in prev_stucks:
+                seen |= _technique_classes(str(e.get("tried") or ""))
+                seen |= _technique_classes(str(e.get("escalate") or ""))
+            if esc_classes <= seen:
+                print(f"[stuck 换路校验] --escalate 的技术类 {sorted(esc_classes)} "
+                      "全部落在已试/已升级过的清单里——「升级到已试过的路」不是升级。\n"
+                      f"已见技术类：{sorted(seen)}\n"
+                      "三选一：① escalate 换到清单外的技术类；② 同类不同法的正当"
+                      "重试加 --note \"差异点\"；③ 台账外技术类词汇误伤时同样用 "
+                      "--note 说明。")
+                return 2
     entry = {"type": "stuck", "ts": now(), "sha16": sha16(binary),
              "at": args.at.strip(), "tried": args.tried.strip(),
              "escalate": args.escalate.strip()}
+    note = (getattr(args, "note", None) or "").strip()
+    if note:
+        entry["note"] = note
     if acknowledged:
         entry["acknowledged_anomalies"] = acknowledged
+    if neg_ack:
+        entry["ack_negatives"] = neg_ack
     append_entry(jsonl, entry)
     auto_render(binary)
     print(json.dumps({"ok": True, "recorded": True,
@@ -752,7 +903,7 @@ def cmd_status(args) -> int:
                 out["churn_hint"] = (
                     f"work 目录 {len(scripts)} 个脚本 vs 台账 {len(entries)} 条目"
                     f"（比值 {ratio:.1f} > 5）——典型的「记账死掉 + 同路径换措辞重试」"
-                    "信号（DEFCON26 复盘 R3：36 脚本 vs 11 条目）。立即审视："
+                    "信号（判例D·R3：36 脚本 vs 11 条目）。立即审视："
                     "这些脚本是否各写各的 region 绕开了 observe 断路器？"
                     "未入账的观测补 observe，卡住先 stuck")
         else:
@@ -767,10 +918,10 @@ def render(binary: Path) -> Path:
     sha = next((e["sha16"] for e in reversed(entries) if "sha16" in e),
                sha16(binary))
 
-    latest: dict[int, dict] = {}
+    latest: dict[str, dict] = {}
     for e in entries:
         if e.get("type") == "conclude":
-            latest[e["id"]] = e
+            latest[str(e["id"])] = e
     obs = [e for e in entries if e.get("type") == "observe"]
     stucks = [e for e in entries if e.get("type") == "stuck"]
 
@@ -787,7 +938,7 @@ def render(binary: Path) -> Path:
         "| # | 结论 | 位置 | 证据（命令/输出要点） | 来源 | 独立验证 | 时间 |",
         "|---|------|------|----------------------|------|---------|------|",
     ]
-    for cid in sorted(latest, key=lambda k: (0, k) if isinstance(k, int)
+    for cid in sorted(latest, key=lambda k: (0, int(k)) if str(k).isdigit()
                       else (1, str(k))):
         e = latest[cid]
         concl = e["conclusion"].replace("\n", " ⏎ ")
@@ -886,7 +1037,7 @@ _SCHEMA = {
                  {"source": {"read_views", "self-script", "decompiler-render",
                              "runtime-gdb", "runtime-oracle", "manual"},
                   "independent": {"yes", "no"},
-                  "kind": {"finding", "flag", "model"}}),
+                  "kind": {"finding", "flag", "model", "negative"}}),
     "anomaly": ({"type", "id", "status", "ts", "sha16", "region", "note",
                  "consequence"}, {"status": {"open"}}),
     "anomaly-resolve": ({"type", "anomaly_id", "status", "note", "ts"},
@@ -896,6 +1047,7 @@ _SCHEMA = {
     "hypothesis-resolve": ({"type", "hypothesis_id", "status", "evidence",
                             "ts"}, {"status": {"confirmed", "killed", "waived"}}),
     "plan": ({"type", "ts", "sha16", "axes", "budget", "note"}, {}),
+    "brute": ({"type", "ts", "sha16", "keyspace", "eta", "why_no_smt"}, {}),
     "stuck": ({"type", "ts", "sha16", "at", "tried", "escalate"}, {}),
 }
 
@@ -1042,13 +1194,33 @@ def main() -> int:
     p.add_argument("--note", help="剪轴理由/备注")
     p.set_defaults(fn=cmd_plan)
 
-    p = sub.add_parser("stuck", help="卡点必记（存在 open anomaly 时必须 --ack 全部列出）")
+    p = sub.add_parser("brute", help="爆破登记（铁律 13 约束系统路由闸：候选空间 ≥ 2^28 的"
+                                     "自建枚举开跑前必须登记，gate_bruteforce 查此账）")
+    p.add_argument("binary")
+    p.add_argument("--keyspace", required=True,
+                   help="候选空间大小，支持 2**31 / 0x80000000 / 1e6 / 95*8*3 形式")
+    p.add_argument("--eta", required=True, help="预计耗时（如 \"25min @ 8 线程\"）")
+    p.add_argument("--why-no-smt", required=True,
+                   help="为何不走 z3/SMT：①密码学黑盒比对（KDF/加解密输出比对）"
+                        "或 ②SMT 已证不可行（unsat/超时证据）")
+    p.add_argument("--tool", help="爆破载体（自写 C/OpenMP、hashcat 模式等）")
+    p.set_defaults(fn=cmd_brute)
+
+    p = sub.add_parser("stuck", help="卡点必记（存在 open anomaly 时必须 --ack 全部列出；"
+                                     "本样本已有 stuck 时，tried/escalate 与上次雷同或"
+                                     "escalate 技术类落在已试清单内 → 拒收，正当同类"
+                                     "重试加 --note 说明差异点）")
     p.add_argument("binary")
     p.add_argument("--at", required=True)
     p.add_argument("--tried", required=True)
     p.add_argument("--escalate", required=True)
     p.add_argument("--ack", help="逗号分隔的全部 open anomaly id（\"A1,A3\"），"
                                  "语义：我知道这些没查")
+    p.add_argument("--note", help="换路校验的豁免说明：与上次 stuck 的差异点"
+                                  "（同类不同法的正当重试必填）")
+    p.add_argument("--ack-negatives", dest="ack_negatives",
+                   help="存在活跃 negative conclude 时必填：逐条说明升级路径"
+                        "为何不被这些否定覆盖（≥20 字）")
     p.set_defaults(fn=cmd_stuck)
 
     p = sub.add_parser("status", help="台账总览 + 回访热点 + （可选）脚本 churn 覆盖度信号")

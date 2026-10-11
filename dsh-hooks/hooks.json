@@ -19,9 +19,18 @@
         "matcher": "Pwsh|pwsh|Bash|bash",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_sample.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_gdbscript.py\"", "timeout": 10 },
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_longrun.py\"", "timeout": 10 },
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_explore.py\"", "timeout": 15 },
-          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_bruteforce.py\"", "timeout": 10 }
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_bruteforce.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_smt.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_deliver.py\"", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Present|present|Edit|edit|MultiEdit|multiedit",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_deliver.py\"", "timeout": 15 }
         ]
       },
       {
@@ -33,7 +42,18 @@
       {
         "matcher": "Write|write",
         "hooks": [
-          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_churn.py\"", "timeout": 10 }
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_churn.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_gdbscript.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_smt.py\"", "timeout": 10 },
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/gate_deliver.py\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Pwsh|pwsh|Bash|bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/inject_rules.py\"", "timeout": 5 }
         ]
       }
     ],

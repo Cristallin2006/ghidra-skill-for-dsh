@@ -10,6 +10,7 @@ description，铁律全文在 ghidra-core §1，这张卡是常驻上下文的�
 （注入失败不许影响会话创建）。
 """
 import json
+import os
 import sys
 
 for _s in (sys.stdout, sys.stderr):
@@ -18,18 +19,61 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+_HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+_SKILLS_DIR = os.path.join(os.path.expanduser("~"), ".dsh", "skills")
+
+
+def _integrity_check():
+    """语法体检所有 hook/skill 脚本（compile() 纯语法检查，不写 __pycache__）。
+
+    判例：某轮 in-place 修复把 ledger.py 一行换行吃成空格，全部机械门依赖
+    ledger 却无任何告警，解题 agent 在 session 里自己修 skill 脚本才发现。
+    返回坏文件相对路径列表；异常按无告警处理（不许影响会话创建）。
+    """
+    bad = []
+    try:
+        targets = [
+            os.path.join(_HOOKS_DIR, f)
+            for f in os.listdir(_HOOKS_DIR)
+            if f.endswith(".py")
+        ]
+        if os.path.isdir(_SKILLS_DIR):
+            for skill in os.listdir(_SKILLS_DIR):
+                sdir = os.path.join(_SKILLS_DIR, skill, "scripts")
+                if not os.path.isdir(sdir):
+                    continue
+                for f in os.listdir(sdir):
+                    if f.endswith(".py"):
+                        targets.append(os.path.join(sdir, f))
+        hj = os.path.join(_HOOKS_DIR, "hooks.json")
+        if os.path.isfile(hj):
+            try:
+                json.load(open(hj, encoding="utf-8"))
+            except Exception:
+                bad.append("hooks/hooks.json(JSON)")
+        for p in targets:
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    compile(fh.read(), p, "exec")
+            except Exception:
+                bad.append(os.path.relpath(p, os.path.expanduser("~")))
+    except Exception:
+        return []
+    return bad
+
+
 CARD = """\
-[逆向纪律卡 · ghidra-skill-for-dsh，铁律全文见 ghidra-core/SKILL.md §1]
-1. 逆向/流量/脱壳/漏洞任务：动手前先用 skill 工具加载对应 SKILL.md 全文；拿到样本先 re-triage 分诊，不凭扩展名猜；反编译/exec-code/仿真等深挖前必须先加载 ghidra-static 全文。
-2. 一切区域级观察走 ledger.py observe、结论走 conclude --source --independent；分析任何区域前先 ledger.py query。全命令语法速查见 ghidra-core §2「ledger.py 速查」——查用法禁止读 ledger.py 源码/逐命令 --help 轮询。
-3. 同区回访必须带 --delta（答"这次和上次差在哪"）；肉眼 hex 同区最多 2 次，第 3 次机械拒绝。
-4. 观测到不一致（重复键冲突/两次读数不同）必须 ledger.py anomaly --consequence 落账，禁止降级为"噪声/待枚举"；**「工具判词不适用/red herring」是否定性结论，必须 conclude 落账——后续观测推翻它时必须 anomaly + --overturn 标 killed，禁止带已崩前提继续（判例：4ccec36c 自证 mask 链数据相关后仍按「peel 不适用」走 z3 70 min 交卷）**。**观测缺失 ≠ 不存在**：watchpoint 未触发 / hbreak 未命中 / Ghidra 无 xref / 反编译不显示，全部只证明"没观测到"——可达性/存在类否定结论必须 `conclude --kind negative --proof static-constraint|dynamic-forced`（缺 proof 机械拒绝，用 observe 充数视同未落账）；样本带自定义 SIGILL/SIGSEGV/SIGTRAP 处理器时，反编译器的 non-returning/死代码判定一律不可信，先查 handler 是否推进了保存的 RIP（判例：4307cc95 Glitched，三条"未命中"误判 flag 路径不可达，实为 UD2 的 SIGILL handler 推进 RIP 正常返回，86 min 白走后靠 wp 才纠正）。
-5. 枚举类解码先出轴矩阵+候选预算；无 oracle（hash/一致性/校验位）不跑全交叉。**约束系统（等式/不等式组求未知输入）第一工具 = z3/SMT，禁止手写枚举器当第一解**——失败触发的断路器拦不住「永远有产出」的枚举器（判例：285db822，z3 毫秒的 BV32 方程组烧 20+ min OpenMP，z3 零调用）；候选空间 ≥ 2^28 的枚举仅在 ①密码学黑盒比对 ②SMT 证不可行 时合法，且必须先 `ledger.py brute --keyspace --eta --why-no-smt` 登记，否则 gate_bruteforce 机械阻断（hashcat/john 专用工具豁免）。
-6. 卡住先 ledger.py stuck（有 open anomaly 须 --ack 或 resolve --waive）再升级工具层级，禁止换措辞重试同一路径；拟合/接线连错 2 次 → 强制升级 z3/SMT 或 emulate_blob/emulate-function，禁止写第 3 个手写拟合脚本；**手上有 ssa_reconstruct 直线程序时，任何求逆/SMT 之前 MUST 先跑 peel_inverse.py 查掩码依赖图**——检出可剥离递推段就逐层手工剥离，无干净结构才放行 SMT（跳过本闸直接 z3 实证丢 flag：be20d7dc，40 min 全 unknown）；**反向闸：peel 检出递推段后禁止直奔 z3/SMT**——下一步是 `peel_inverse.py <recon> --emit-solver peel_solve.py` 生成骨架、填 KNOWN/CALL_TABLES 逐层反解（检出后 0 次剥离直奔 z3 实证丢 flag：47246ce9，z3 模型连修 4 次未收敛，47 min 无 flag）；**z3/SMT 模型接线连错 2 次（unsat 无法解释/换输入不泛化/污点断链）→ 禁止修第 3 次模型，强制回到剥离路径或 ledger.py stuck 升级**；**骨架使用闸：emit-solver 骨架 0 次填写/运行 = 未过闸，主张「检出段不适用」须 conclude 带证据，递推段非目标转 cone_invert.py 锥形反推别跳 SMT（判例：4ccec36c 骨架 head 一眼弃用，z3 长征 91 min 交卷丢 flag）；stuck 是升级起点不是终点：--escalate 在能力范围内（机械步骤/已有部分验证）必须先执行再交卷——stop_check 机械拦截「末条 stuck 且 escalate 未执行」；**升级未收敛 ≠ 升级穷尽：escalate 执行后未收敛，禁止以「上下文将尽/预算不足」为由默默交卷——补规则重跑/换新路径/ask_user_question 三选一（判例：29bf99c0 谎称 context exhausted，实测 1M 窗口占用不足三成，19 min 交卷丢 flag），stop_check 机械拦截未收敛投降；cone_invert 报矛盾先看判词：矛盾锥无未知量 = 符号化不完整，跑 --diff-symbolize 补符号化重跑，不是路径死了**；**卡点自述机械闸：思考/回复里自述「卡住/going in circles/行不通」而台账无 stuck，gate_stuck 将拦截下一次工具调用、强制 stuck 落账（判例：b781ff3c 四次自述零落账，10:11 识别的 shop 溢出与 10:40 的 800 万血条 30 分钟未接线，38min 零 exploit）——推出「正常路径不可行」时先 ledger.py query 找「已识别未利用」的发现接线**；**禁止以提问结束回合：ask_user_question 仅限缺凭据/授权/偏好裁决，选项不得违反用户明示指令，空选/驳回 = 按推荐选项立即自主继续，禁止空转收尾；卡点自述未落账时提问同样被 gate_stuck 机械拦截（判例：c50c8812 被拦 2 次后用提问绕道、列违规选项、空选后死寂收场）**。
-7. flag 的唯一合法验证 = 未修改的原程序/平台接受候选输入；自写探针的等价式不是程序判定。flag 结论必须 ledger.py conclude --kind flag --program-accept "投喂命令+成功响应"（缺证据 exit 2）。
-8. timeout ≥300s 的长任务必须走 guarded_run.py（tee 落盘+无缓冲+杀前保全）；裸 `timeout N python3 x.py > log` 会因块缓冲+SIGTERM 丢光部分结果。
-9. 中断/恢复后第一动作 = 清掉上轮最后一个 open hypothesis（ledger.py hypothesis --resolve-id --status confirmed|killed --evidence，客观不可检验走 waived --waive），再写报告。宣布「模型/反演已闭合」必须 conclude --kind model --anchor "L2 左逆锚定实测"：inv(fwd(已知答案))==已知答案；fwd(inv(B))==B 恒真，零信息量，不算验证。手上有已知答案（如 'A'*L 的 trace）就必须拿它当锚。
-10. 工具输出的 advice/下一步处方（如 conflict_oracle 末尾的 decode_engine 命令）必须照抄执行，或 ledger.py --note 落账不执行的理由；无视处方转手搓脚本 = 违规（判例：decode_engine 零调用，>2e5 手搓候选全在缺轴空间，42 min 无 flag）。真复合不一定消除冲突——冲突排名不收敛时改走处方里的「铺轴 + oracle 过滤」；冲突字段是键的确定函数时，它是复合值的抵消项（纳入组合），不是"无信息"（禁止剔除）。"""
+[逆向纪律卡 · ghidra-skill-for-dsh｜格式：触发器 → 动作（机械门注明闸名）。判例与细则全文在 ghidra-core §1，需要时按指针加载]
+1. 开局：逆向任务先加载对应 SKILL.md 全文；样本先 re-triage 分诊，不凭扩展名猜；decompile/exec-code/仿真等深挖前先加载 ghidra-static 全文，gdb/写 .gdb 脚本等动态操作前先加载 re-dynamic 全文（gate_sample 加载门机械拦——程序 ID/包装脚本一样拦）；手写 .gdb 脚本第二个起禁抄样板，改用 re-dynamic 的 gdbkit.py（gate_gdbscript 机械拦）。
+2. 落账：观察 → ledger.py observe；结论 → conclude --source --independent；分析任何区域前先 ledger.py query。语法速查见 ghidra-core §2——禁止读 ledger.py 源码或逐命令 --help 轮询。
+3. 回访：同区二次观察必须 --delta（"这次差在哪"）；肉眼 hex 同区最多 2 次，第 3 次机械拒绝。
+4. 否定判词：不一致 → anomaly --consequence；「不可达/不适用/red herring/工具不可用」及能力类判词「不可求逆/不可建模/无法求解/unsolvable/not invertible」→ conclude --kind negative --proof（缺 proof exit 2；交付物 write/present 含此类判词而无 negative 落账 → gate_deliver 机械拦）。状态描述「尚未解出/未收敛」+ 下一步路径是合法收尾，不算否定判词。观测缺失 ≠ 不存在；仿射证伪 ≠ 不可逆（Feistel 轮函数单向也整体可逆，细则见 ghidra-static runtime-dependent-verifier.md §②）。信号处理器/裸 UD2 样本的 non-returning/死代码判定不可信 → noreturn_fix.py 修视图（--fix/--flow）。
+5. 枚举与约束：枚举类先出轴矩阵+候选预算，无 oracle 不跑全交叉。约束系统第一工具 = z3，但 z3 之前先过剥离闸（gate_smt 机械拦）：有直线程序先 peel_inverse.py（检出段 → --emit-solver 骨架；无结构 → cone_invert.py），peel 不适用须 conclude 落账。≥2^28 自建枚举先 ledger.py brute 登记（gate_bruteforce 拦；hashcat/john 豁免）。
+6. 卡点：卡住 → ledger.py stuck（有 open anomaly 须 --ack）。stuck 的 escalate 必须换路——与上次雷同或技术类落在已试清单内 → 机械拒收（正当同类重试加 --note）。自述「卡住/行不通」未落账 → gate_stuck 拦下一次工具调用（含 ask_user_question）。escalate 在能力范围内必须先执行再交卷；未收敛禁止以「上下文将尽」默默交卷（stop_check 拦）。提问仅限缺凭据/授权/裁决，空选 = 按推荐选项立即自主继续。
+7. flag 验证：唯一合法证据 = 未修改原程序/平台接受候选输入；conclude --kind flag --program-accept（缺证据 exit 2，禁止 --source self-script）。
+8. 长任务：timeout ≥300s 必须走 guarded_run.py（gate_longrun 拦裸 timeout——块缓冲+SIGTERM 会丢光部分结果）。
+9. 中断恢复：第一动作 = 清上轮最后一个 open hypothesis（--status confirmed|killed --evidence；不可检验走 waived）。宣布「模型闭合」须 conclude --kind model --anchor L2 左逆锚定实测（inv(fwd(已知))==已知；fwd(inv(B))==B 恒真，零信息量）。
+10. 处方纪律：工具输出末尾的 advice/下一步处方必须照抄执行，或 ledger.py --note 落账不执行的理由。冲突字段是键的确定函数时是复合抵消项（纳入组合），不是无信息，禁止剔除。"""
 
 
 def main() -> int:
@@ -38,9 +82,17 @@ def main() -> int:
         event = "SessionStart"
         if raw.strip():
             event = json.loads(raw).get("hook_event_name", event)
+        card = CARD
+        bad = _integrity_check()
+        if bad:
+            warn = ("\n[完整性告警 · session_start 体检] 以下 hook/skill 脚本语法损坏，"
+                    "依赖它们的机械门可能已静默失效——先 py_compile 定位并修复再继续做题： "
+                    + ", ".join(bad))
+            card += warn
+            print("session_start integrity: BROKEN " + ", ".join(bad), file=sys.stderr)
         json.dump({"hookSpecificOutput": {
             "hookEventName": event,
-            "additionalContext": CARD,
+            "additionalContext": card,
         }}, sys.stdout, ensure_ascii=False)
     except Exception as e:
         print(f"session_start hook warning: {e}", file=sys.stderr)

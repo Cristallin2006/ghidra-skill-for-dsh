@@ -5,11 +5,19 @@ matcher "Pwsh|pwsh|Bash|bash"（dsh-hook-protocol 的字面量 matcher 是
 **大小写敏感**精确匹配：CLAUDE_LITERAL 模式走 split("|").includes()——
 只写 "Bash" 在 WSL 的 "bash" 工具上静默失效，chal session 即因此零拦截）。
 每次 shell 调用前触发。判定逻辑：
+  0. 深挖加载门（51bb491d：全程只加载 re-triage+ghidra-core 就深挖，
+     references 配方零曝光）：逆向活跃会话（session log 含 ledger.py）里
+     命中静态深挖动词（decompile/exec-code/disassemble/emulate/patch…）或
+     动态深挖动词（gdb/layer_dump/frida——不要求样本文件 token，程序 ID
+     与 grpc.sh 包装一样拦）时，检查本会话是否已加载对应 skill 全文
+     （ghidra-static / re-dynamic），未加载 -> exit 2。skill 检测通道与
+     gate_stuck 同款：stop_check.session_log_text(session_id) 里找
+     tool/call name=="skill" 记录或 skills/<name>/SKILL.md 读取记录。
   1. 命令含 ledger.py / doctor.py（台账/工具链自身操作）-> 放行
-  2. 命令含分析动词（xxd/hexdump/strings/objdump/readelf/...）或
-     rpc_driver 深挖子命令（decompile/exec-code/emulate/patch…，路由看门：
-     没分诊就不许深挖），且作用于存在的二进制样本文件（扩展名或 magic
-     判定；pcap/pcapng 豁免——triage 修头是合法开局）-> 进入台账检查
+  2. 命令含分诊动词（xxd/hexdump/strings/objdump/readelf/...）或
+     rpc 深挖子命令（路由看门：没分诊就不许深挖），且作用于存在的二进制
+     样本文件（扩展名或 magic 判定；pcap/pcapng 豁免——triage 修头是合法
+     开局）-> 进入台账检查
   3. ~/.dsh/ghidra-workspace/out/<样本名>.ledger.jsonl 存在 -> 放行
      （之后的同区回访由 ledger 自己的断路器管）；不存在 -> exit 2 阻断，
      stderr 指引先 re-triage 分诊 + ledger query，深挖另须先加载
@@ -37,9 +45,9 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# 分析动词：命中其一才进入样本判定
+# 分诊动词：命中其一才进入样本台账判定（纯分诊，不要求 skill 加载）
 VERBS = re.compile(
-    r"\b(xxd|hexdump|hd|od|strings|objdump|readelf|nm|rabin2|r2|radare2|gdb|"
+    r"\b(xxd|hexdump|hd|od|strings|objdump|readelf|nm|rabin2|r2|radare2|"
     r"llvm-objdump|dumpbin|windbg|cdb)\b", re.IGNORECASE)
 
 # 台账/工具链自身操作一律放行（rpc_driver 不再整体豁免——深挖子命令走路由门）
@@ -49,10 +57,20 @@ ALLOW = re.compile(r"ledger\.py|doctor\.py|triage_scan\.py|driver\.py")
 # rpc_driver 的深挖子命令与裸分析动词同等待遇：无台账 = 没分诊 = 阻断。
 # ensure/status/stop/triage/只读元数据（imports/exports/functions/strings…）
 # 仍放行——它们是分诊动作本身。
-RPC = re.compile(r"rpc_driver\.py")
+# RPC 匹配不止 rpc_driver.py：51bb491d 里 agent 自写 grpc.sh 包装全部绕过，
+# 故覆盖已知包装名；深挖动词本身（STATIC_DEEP）才是主触发器，不依赖包装名。
+RPC = re.compile(r"rpc_driver\.py|ghidra-rpc\b|grpc\.sh")
 RPC_DEEP = re.compile(
     r"\b(decompile(?:-all)?|search-decompiled|exec-code|disassemble|assemble|"
     r"write-bytes|patch|emulate-(?:function|program)|version-track)\b")
+
+# 静态深挖动词（脱离 rpc 上下文也成立）：触发「ghidra-static 加载门」。
+# 仅逆向活跃会话（session log 含 ledger.py）启用，普通开发里的 patch/
+# disassemble 不受影响。
+STATIC_DEEP = RPC_DEEP
+# 动态深挖动词：触发「re-dynamic 加载门」。\bgdb\b 同时覆盖 ".gdb" 文件名
+# （'.' 即词边界）——cat > x.gdb 写脚本也算动态深挖。
+DYN_DEEP = re.compile(r"\bgdb\b|\blldb\b|layer_dump\.py|\bfrida\b")
 
 SAMPLE_EXT = {".exe", ".dll", ".so", ".bin", ".elf", ".dex", ".apk",
               ".class", ".sys", ".com", ".scr", ".ocx", ".dylib", ".o", ".a"}
@@ -100,6 +118,70 @@ def ledger_exists(sample: Path) -> bool:
 CYTHON_EVIDENCE = re.compile(r"const_scan|frame_map")
 
 
+def _session_text(session_id: str):
+    """本会话持久日志全文；不可判定返回 None（回退放行）。与 gate_stuck 同通道。"""
+    if not session_id:
+        return None
+    try:
+        import stop_check
+        return stop_check.session_log_text(session_id)
+    except Exception:
+        return None
+
+
+_SKILL_CALL = re.compile(r'"name"\s*:\s*"skill"')
+
+
+def _skill_loaded(log_text: str, skill: str) -> bool:
+    """会话日志里出现过该 skill 的加载动作（skill 工具调用或 SKILL.md 读取）。
+
+    只认动作不认提及：纪律卡与 available-skills 列表都提到 ghidra-static，
+    但都不是加载。tool/call 记录里 data.name=="skill"（JSON 空格有无皆可）
+    且同行含该 skill 名（在转义的 arguments 里）即算加载——调用发起即算，
+    不等结果，防死锁。
+    """
+    needle_path = f"skills/{skill}/SKILL.md"
+    for line in log_text.splitlines():
+        if skill not in line:
+            continue
+        if '"tool/call"' in line and _SKILL_CALL.search(line):
+            return True
+        if needle_path in line:
+            return True
+    return False
+
+
+def skill_gate(session_id: str, need_static: bool, need_dyn: bool) -> int:
+    """深挖加载门：逆向活跃会话里，深挖前必须已加载对应 skill 全文。
+
+    逆向活跃 = session log 含 ledger.py（纯开发会话的 gdb/patch 不管）。
+    任何不可判定（无 session_id / 日志读不到）一律放行。
+    """
+    text = _session_text(session_id)
+    if text is None or "ledger.py" not in text:
+        return 0
+    missing = []
+    if need_static and not _skill_loaded(text, "ghidra-static"):
+        missing.append("ghidra-static")
+    if need_dyn and not _skill_loaded(text, "re-dynamic"):
+        missing.append("re-dynamic")
+    if not missing:
+        return 0
+    msg = (
+        f"[gate_sample · 铁律1 加载门] 检测到深挖命令，但本会话还没加载 "
+        f"{' / '.join(missing)} 全文——skill 路由行与 references 配方都在里面，"
+        f"不加载 = 裸奔。\n"
+        f"判例 51bb491d：全程只加载 re-triage+ghidra-core 就深挖，"
+        f"关键配方（references/runtime-dependent-verifier.md）零曝光，"
+        f"手写 8 个 gdb 脚本（gdbkit 零使用），force compare 后误判"
+        f"「必须逆 walk」放弃。\n"
+        f"立即执行（每个 skill 一次即可，本门随后不再拦）：\n"
+        + "\n".join(f"  用 skill 工具加载 {s}" for s in missing)
+    )
+    print(msg, file=sys.stderr)
+    return 2
+
+
 def python_ext_unprimed(sample: Path) -> bool:
     """triage 报 python_ext=true 且台账无 const_scan/frame_map 证据 -> True。
 
@@ -137,7 +219,7 @@ def main() -> int:
     cmd = ti.get("command") or ti.get("cmd") or ""
     if not isinstance(cmd, str) or not cmd.strip():
         return 0
-    # 先判 rpc_driver：深挖子命令走路由门，其余（ensure/triage/只读元数据）放行。
+    # 先判 rpc 系：深挖子命令走路由门，其余（ensure/triage/只读元数据）放行。
     # 注意不能靠 ALLOW 里的 driver\.py 豁免 rpc_driver——"driver\.py" 是
     # "rpc_driver.py" 的子串，会整体漏闸。
     if RPC.search(cmd):
@@ -148,8 +230,18 @@ def main() -> int:
         return 0
     else:
         deep_rpc = False
-    if not VERBS.search(cmd) and not deep_rpc:
+    static_deep = bool(STATIC_DEEP.search(cmd)) or deep_rpc
+    dyn_deep = bool(DYN_DEEP.search(cmd))
+    if not VERBS.search(cmd) and not static_deep and not dyn_deep:
         return 0
+
+    # 深挖加载门（铁律1 真·机械化）：不要求样本文件 token——程序 ID、
+    # grpc.sh 包装、cat > x.gdb 写脚本一样拦。仅逆向活跃会话启用。
+    if static_deep or dyn_deep:
+        rc = skill_gate(str(payload.get("session_id") or ""),
+                        static_deep, dyn_deep)
+        if rc:
+            return rc
 
     cwd = Path(payload.get("cwd") or os.getcwd())
     # shell 分词（双/单引号成组），逐 token 找样本文件
